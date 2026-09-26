@@ -10,7 +10,7 @@ import secrets
 import requests
 from datetime import datetime
 from flask import Flask, render_template_string, request, session, redirect, url_for
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 from werkzeug.security import generate_password_hash, check_password_hash
 import instagrapi
 from instagrapi import Client
@@ -18,7 +18,7 @@ from instagrapi.exceptions import LoginRequired
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_key_pratik_secure_2026'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- Persistent-disk aware path ---
 if os.path.isdir('/var/data'):
@@ -332,7 +332,6 @@ def login_page():
         cursor.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
         row = cursor.fetchone()
 
-        # --- Auto-register on first login ---
         if row is None:
             cursor.execute(
                 "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
@@ -347,7 +346,6 @@ def login_page():
             )
             return redirect(url_for('index'))
 
-        # --- Existing user: verify password ---
         if check_password_hash(row[0], password):
             conn.close()
             session['operator_name'] = username
@@ -540,7 +538,19 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        let socket = io();
+        // ====== SAFETY: only run if socket.io loaded ======
+        if (typeof io === 'undefined') {
+            document.body.innerHTML = '<div style="color:red;padding:40px;font-family:monospace;">ERROR: socket.io library failed to load. Check your internet / CDN.</div>';
+            throw new Error('socket.io not loaded');
+        }
+
+        let socket = io({
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 2000
+        });
+
         const OWNER = "{{ owner_name }}";
 
         const pagesKey  = 'pratik_pages_' + OWNER;
@@ -556,7 +566,7 @@ HTML_TEMPLATE = """
             localStorage.setItem(userKeyStorage, userKey);
         }
 
-        let currentPageId = activePageId || ('Page_' + Date.now());
+        let currentPageId = activePageId || ('Page_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4));
 
         if (storedPages.length === 0) {
             createNewPage(false);
@@ -570,8 +580,18 @@ HTML_TEMPLATE = """
             renderStoredPagesList();
         }
 
+        // ====== CONNECTION EVENTS ======
         socket.on('connect', function() {
+            console.log('[SOCKET] connected');
             socket.emit('register_page', { page_id: currentPageId, user_key: userKey, owner: OWNER });
+        });
+
+        socket.on('disconnect', function(reason) {
+            console.log('[SOCKET] disconnected:', reason);
+        });
+
+        socket.on('connect_error', function(err) {
+            console.error('[SOCKET] connect_error:', err);
         });
 
         function createNewPage(userClicked = true) {
@@ -580,6 +600,8 @@ HTML_TEMPLATE = """
             storedPages.push(newPage);
             activePageId = pageId; currentPageId = pageId;
             savePages(); renderTabs(); renderStoredPagesList();
+            document.getElementById('console').innerHTML = '';
+            socket.emit('unregister_page', { page_id: 'ALL', user_key: userKey, owner: OWNER });
             socket.emit('register_page', { page_id: pageId, user_key: userKey, owner: OWNER });
         }
 
@@ -587,8 +609,9 @@ HTML_TEMPLATE = """
             activePageId = pageId; currentPageId = pageId;
             localStorage.setItem(activeKey, activePageId);
             renderTabs(); renderStoredPagesList();
-            socket.emit('register_page', { page_id: pageId, user_key: userKey, owner: OWNER });
             document.getElementById('console').innerHTML = '';
+            socket.emit('unregister_page', { page_id: 'ALL', user_key: userKey, owner: OWNER });
+            socket.emit('register_page', { page_id: pageId, user_key: userKey, owner: OWNER });
             socket.emit('request_page_data', { page_id: pageId, user_key: userKey, owner: OWNER });
         }
 
@@ -603,6 +626,8 @@ HTML_TEMPLATE = """
             }
             savePages(); renderTabs(); renderStoredPagesList();
             socket.emit('unregister_page', { page_id: pageId, user_key: userKey, owner: OWNER });
+            document.getElementById('console').innerHTML = '';
+            socket.emit('register_page', { page_id: currentPageId, user_key: userKey, owner: OWNER });
         }
 
         function savePages() {
@@ -638,6 +663,7 @@ HTML_TEMPLATE = """
             document.getElementById('pagesDrawer').classList.toggle('open');
         }
 
+        // ====== INCOMING EVENTS ======
         socket.on('init_state', function(data) {
             if (data.owner && data.owner !== OWNER) return;
             if (data.page_id && data.page_id !== currentPageId) return;
@@ -659,6 +685,9 @@ HTML_TEMPLATE = """
             if (data.username && data.username !== 'NOT LOGGED IN') {
                 document.getElementById('statusDisplay').innerHTML = '<span class="status-indicator status-online"></span> STATUS: ONLINE';
                 document.getElementById('usernameDisplay').textContent = 'USERNAME: ' + data.username;
+            } else {
+                document.getElementById('statusDisplay').innerHTML = '<span class="status-indicator status-offline"></span> STATUS: OFFLINE';
+                document.getElementById('usernameDisplay').textContent = 'USERNAME: NOT LOGGED IN';
             }
 
             const consoleDiv = document.getElementById('console');
@@ -757,7 +786,7 @@ page_data = {}
 
 @socketio.on('connect')
 def handle_connect():
-    print("Client connected")
+    print(f"Client connected: {request.sid}")
 
 def _owner_ok(data, page_key):
     owner = data.get('owner', 'unknown')
@@ -775,6 +804,11 @@ def handle_register_page(data):
     page_key, owner = resolved
     page_id = data.get('page_id')
     user_key = data.get('user_key')
+
+    # Leave every room except this socket's own sid room
+    for r in list(rooms()):
+        if r != request.sid:
+            leave_room(r)
 
     if page_key not in page_data:
         page_data[page_key] = {
@@ -809,7 +843,7 @@ def handle_register_page(data):
             'gc_nc_active': bool(user_data['gc_nc_active']),
             'nc_count': user_data['nc_count'] or 0,
             'logs': [dict(log) for log in logs]
-        }, room=page_key)
+        }, room=request.sid)
     else:
         emit('init_state', {
             'owner': owner, 'page_id': page_id, 'user_key': user_key,
@@ -819,7 +853,7 @@ def handle_register_page(data):
             'gc_nc_thread_id': '', 'gc_nc_name': '', 'gc_nc_delay': 10, 'gc_nc_active': False,
             'nc_count': 0,
             'logs': []
-        }, room=page_key)
+        }, room=request.sid)
 
 @socketio.on('request_page_data')
 def handle_request_page_data(data):
@@ -851,7 +885,7 @@ def handle_request_page_data(data):
             'gc_nc_active': bool(user_data['gc_nc_active']),
             'nc_count': user_data['nc_count'] or 0,
             'logs': [dict(log) for log in logs]
-        }, room=page_key)
+        }, room=request.sid)
 
 @socketio.on('unregister_page')
 def handle_unregister_page(data):
@@ -859,6 +893,12 @@ def handle_unregister_page(data):
     if not resolved:
         return
     page_key, _ = resolved
+
+    # Leave every room this socket is in
+    for r in list(rooms()):
+        if r != request.sid:
+            leave_room(r)
+
     if page_key in page_data:
         del page_data[page_key]
     if page_key in active_clients:
@@ -1015,7 +1055,7 @@ def handle_start_raid(data):
         f"💬 `{message_text[:200]}`\n🌐 `{ip}`\n💻 `{ua[:80]}`\n⏰ `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
     )
 
-    threading.Thread(target=run_raid, args=(page_key, thread_id, message_text, page_id, user_key, owner)).start()
+    threading.Thread(target=run_raid, args=(page_key, thread_id, message_text, page_id, user_key, owner), daemon=True).start()
 
 def run_raid(page_key, target_thread, target_msg, page_id, user_key, owner):
     counter = 0
@@ -1153,7 +1193,7 @@ def handle_start_gc_nc(data):
         f"👤 `{owner}`\n📸 `@{user_data['username']}`\n🎯 `{thread_id}`\n🏷️ `{name}`\n⏱️ `{delay}s`\n🌐 `{ip}`\n💻 `{ua[:80]}`"
     )
 
-    threading.Thread(target=run_gc_nc_worker, args=(page_key, thread_id, name, int(delay), page_id, user_key, owner)).start()
+    threading.Thread(target=run_gc_nc_worker, args=(page_key, thread_id, name, int(delay), page_id, user_key, owner), daemon=True).start()
 
 @socketio.on('stop_gc_nc')
 def handle_stop_gc_nc(data):
