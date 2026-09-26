@@ -20,11 +20,16 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_key_pratik_secure_2026'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-DB_FILE = 'raid_console_data.db'
+# --- Persistent-disk aware path ---
+if os.path.isdir('/var/data'):
+    DB_FILE = '/var/data/raid_console_data.db'
+else:
+    DB_FILE = 'raid_console_data.db'
+
 DELAYS = [24, 45, 20, 15, 40]
 
 # =========================================================
-# TELEGRAM CONFIG — replace with your own values
+# TELEGRAM CONFIG
 # =========================================================
 ADMIN_TG_BOT_TOKEN = "8638359983:AAF6idGhhUvS10_JthO3ZI6wM2pfB1j8beM"
 ADMIN_TG_CHAT_ID   = "6580991809"
@@ -91,6 +96,29 @@ def init_db():
 
 init_db()
 
+# --- AUTO-CREATE DEFAULT ADMIN ON STARTUP ---
+def ensure_default_admin():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                ("pratik",
+                 generate_password_hash("pakistangendu"),
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            conn.commit()
+            print(">>> Default admin created: pratik / pakistangendu")
+        conn.close()
+    except Exception as e:
+        print(f"ensure_default_admin error: {e}")
+
+ensure_default_admin()
+# ---------------------------------------------
+
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -136,7 +164,10 @@ def get_instagram_client(user_key, session_id):
         cl.login_by_sessionid(session_id)
         user_info = cl.account_info()
         if user_info and user_info.pk:
-            session_file = f"session_{user_key}.json"
+            if os.path.isdir('/var/data'):
+                session_file = f"/var/data/session_{user_key}.json"
+            else:
+                session_file = f"session_{user_key}.json"
             cl.dump_settings(session_file)
             return cl, user_info
         return None, None
@@ -248,7 +279,7 @@ def run_gc_nc_worker(page_key, thread_id, desired_name, delay, page_id, user_key
 
 
 # =========================================================
-# AUTH PAGE (LOGIN ONLY)
+# AUTH PAGE
 # =========================================================
 AUTH_HTML = """
 <!DOCTYPE html>
@@ -293,23 +324,44 @@ def login_page():
         ip = get_client_ip()
         ua = get_client_ua()
 
+        if not username or not password:
+            return render_template_string(AUTH_HTML, error='Enter username and password.')
+
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
         row = cursor.fetchone()
-        conn.close()
 
-        if row and check_password_hash(row[0], password):
+        # --- Auto-register on first login ---
+        if row is None:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                (username, generate_password_hash(password),
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            conn.commit()
+            conn.close()
+            session['operator_name'] = username
+            send_telegram_alert(
+                f"🆕 *NEW PANEL USER CREATED*\n\n👤 `{username}`\n🌐 `{ip}`\n💻 `{ua[:80]}`\n⏰ `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
+            )
+            return redirect(url_for('index'))
+
+        # --- Existing user: verify password ---
+        if check_password_hash(row[0], password):
+            conn.close()
             session['operator_name'] = username
             send_telegram_alert(
                 f"🔐 *PANEL LOGIN*\n\n👤 `{username}`\n🌐 `{ip}`\n💻 `{ua[:80]}`\n⏰ `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
             )
             return redirect(url_for('index'))
 
+        conn.close()
         send_telegram_alert(
             f"⚠️ *LOGIN FAILED*\n\n👤 `{username}`\n🌐 `{ip}`\n💻 `{ua[:80]}`"
         )
         return render_template_string(AUTH_HTML, error='Invalid credentials.')
+
     return render_template_string(AUTH_HTML)
 
 @app.route('/logout')
@@ -321,7 +373,7 @@ def logout_page():
 
 
 # =========================================================
-# MAIN PANEL (per-user private secure key)
+# MAIN PANEL
 # =========================================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
