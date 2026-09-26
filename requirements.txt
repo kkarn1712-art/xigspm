@@ -6,4 +6,5 @@ eventlet==0.36.1
 Werkzeug==3.0.3
 instagrapi==2.1.2
 requests==2.32.3
+Pillow==10.4.0
 gunicorn==21.2.0
