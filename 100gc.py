@@ -6,7 +6,7 @@ import json
 import threading
 import logging
 import re
-from flask import Flask, jsonify, Response, request, render_template_string
+from flask import Flask, jsonify, Response, request
 from instagrapi import Client
 from instagrapi.exceptions import LoginRequired, RateLimitError, ChallengeRequired, TwoFactorRequired
 
@@ -67,7 +67,6 @@ def load_all_titles():
     for filepath in files:
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-            # Extract quotes or comma separated titles
             raw_titles = re.findall(r'"([^"]*)"', content)
             if not raw_titles:
                 raw_titles = [x.strip() for x in content.split(",") if x.strip()]
@@ -107,191 +106,155 @@ def logs_route():
         output.append("")
     return Response("\n".join(output), mimetype="text/plain")
 
-@app.route("/dashboard")
-def dashboard():
-    html = """
-    <html>
-    <head>
-        <title>ABHIxPRATIK</title>
-        <meta http-equiv="refresh" content="2">
-        <style>
-            body { background-color: #0d1117; font-family: monospace; margin: 0; padding: 20px; color: #00ff88; }
-            .header { text-align: center; font-size: 28px; font-weight: bold; margin-bottom: 20px; border: 2px solid #00ff88; padding: 10px; }
-            .nav { text-align: center; margin-bottom: 20px; }
-            .nav a { color: #00ff88; margin: 0 15px; text-decoration: none; border: 1px solid #00ff88; padding: 5px 15px; }
-            .container { display: flex; flex-direction: row; gap: 20px; align-items: flex-start; }
-            .panel { flex: 1; min-width: 300px; border: 2px solid #00ff88; background-color: #111827; padding: 15px; height: 70vh; overflow-y: auto; }
-            .panel-title { font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #00ff88; padding-bottom: 5px; }
-            .log-line { margin-bottom: 6px; white-space: pre-wrap; }
-        </style>
-    </head>
-    <body>
-        <div class="header">✦ ABHIxPRATIK ✦</div>
-        <div class="nav">
-            <a href="/login-panel">🔑 LOGIN PANEL</a>
-            <a href="/upload-panel">📁 FILE UPLOAD PANEL</a>
-        </div>
-        <div class="container">
-    """
-    for user in USERS:
-        html += f'<div class="panel"><div class="panel-title">{user}</div>'
-        for line in logs_ui.get(user, []):
-            html += f'<div class="log-line">{line}</div>'
-        html += "</div>"
-    html += """
-        </div>
-        <script>
-        function scrollPanels() {
-            document.querySelectorAll('.panel').forEach(function(panel) {
-                panel.scrollTop = panel.scrollHeight;
-            });
-        }
-        window.onload = scrollPanels;
-        setInterval(scrollPanels, 1500);
-        </script>
-    </body>
-    </html>
-    """
-    return html
+@app.route("/", methods=['POST'])
+def handle_actions():
+    global USERNAME, PASSWORD, SESSION_FILE
+    action = request.form.get('action')
+    
+    # 1. HANDLE LOGIN VIA CREDENTIALS
+    if action == 'login_creds':
+        USERNAME = request.form.get('username', '').strip()
+        PASSWORD = request.form.get('password', '').strip()
+        otp = request.form.get('otp', '').strip()
+        SESSION_FILE = f"session_{USERNAME}.json"
+        if USERNAME not in USERS:
+            USERS.append(USERNAME)
+            logs_ui[USERNAME] = []
+        try:
+            setup_mobile_fingerprint()
+            if otp:
+                cl.login(USERNAME, PASSWORD, verification_code=otp)
+            else:
+                cl.login(USERNAME, PASSWORD)
+            cl.dump_settings(SESSION_FILE)
+            log_line(f"🔑 WEB LOGIN SUCCESSFUL - {USERNAME}")
+        except TwoFactorRequired:
+            log_line(f"⚠️ 2FA Required for {USERNAME}. Submit OTP code.")
+        except ChallengeRequired:
+            log_line(f"⚠️ Challenge Required for {USERNAME}. Submit Email/SMS code.")
+        except Exception as e:
+            log_line(f"❌ Login Failed: {str(e)}")
 
-@app.route('/login-panel', methods=['GET', 'POST'])
-def login_panel():
-    msg = ""
-    if request.method == 'POST':
-        login_type = request.form.get('login_type')
-        global USERNAME, PASSWORD, SESSION_FILE
+    # 2. HANDLE LOGIN VIA SESSION JSON
+    elif action == 'login_session':
+        session_data = request.form.get('session_data', '').strip()
+        u_name = request.form.get('session_user', 'session_user').strip()
+        USERNAME = u_name
+        SESSION_FILE = f"session_{USERNAME}.json"
+        if USERNAME not in USERS:
+            USERS.append(USERNAME)
+            logs_ui[USERNAME] = []
+        try:
+            session_json = json.loads(session_data)
+            cl.set_settings(session_json)
+            cl.dump_settings(SESSION_FILE)
+            log_line(f"⏳ SESSION LOADED VIA WEB - {USERNAME}")
+        except Exception as e:
+            log_line(f"❌ Session Error: {str(e)}")
 
-        if login_type == 'credentials':
-            USERNAME = request.form.get('username', '').strip()
-            PASSWORD = request.form.get('password', '').strip()
-            otp = request.form.get('otp', '').strip()
-            
-            SESSION_FILE = f"session_{USERNAME}.json"
-            if USERNAME not in USERS:
-                USERS.append(USERNAME)
-                logs_ui[USERNAME] = []
-
-            try:
-                setup_mobile_fingerprint()
-                if otp:
-                    cl.login(USERNAME, PASSWORD, verification_code=otp)
-                else:
-                    cl.login(USERNAME, PASSWORD)
-                cl.dump_settings(SESSION_FILE)
-                log_line(f"🔑 WEB LOGIN SUCCESSFUL - {USERNAME}")
-                msg = "Login successful! Check dashboard for details."
-            except TwoFactorRequired:
-                msg = "2FA Required! Please submit form again with 2FA OTP code."
-            except ChallengeRequired:
-                msg = "Challenge Required by Instagram! Submit OTP code received on Email/SMS."
-            except Exception as e:
-                msg = f"Login Failed: {str(e)}"
-
-        elif login_type == 'session':
-            session_data = request.form.get('session_data', '').strip()
-            u_name = request.form.get('session_user', 'session_user').strip()
-            USERNAME = u_name
-            SESSION_FILE = f"session_{USERNAME}.json"
-            
-            try:
-                session_json = json.loads(session_data)
-                cl.set_settings(session_json)
-                cl.dump_settings(SESSION_FILE)
-                log_line(f"⏳ SESSION LOADED VIA WEB - {USERNAME}")
-                msg = "Session settings successfully loaded!"
-            except Exception as e:
-                msg = f"Invalid Session JSON: {str(e)}"
-
-    return f"""
-    <html>
-    <head>
-        <title>ABHIxPRATIK - Login</title>
-        <style>
-            body {{ background-color: #0d1117; font-family: monospace; padding: 30px; color: #00ff88; }}
-            .box {{ border: 2px solid #00ff88; padding: 20px; max-width: 500px; margin: 0 auto 30px auto; background: #111827; }}
-            input, select, textarea {{ width: 100%; padding: 10px; margin: 10px 0; background: #0d1117; border: 1px solid #00ff88; color: #00ff88; box-sizing: border-box; }}
-            button {{ background: #00ff88; color: #0d1117; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; width: 100%; }}
-            .msg {{ color: #ff0055; margin-bottom: 15px; font-weight: bold; text-align: center; }}
-            a {{ color: #00ff88; text-decoration: none; display: block; text-align: center; margin-top: 15px; }}
-        </style>
-    </head>
-    <body>
-        <div class="msg">{msg}</div>
-        
-        <!-- OPTION 1: CREDENTIALS / OTP -->
-        <div class="box">
-            <h3>Option 1: Login via ID / Pass / OTP</h3>
-            <form method="POST">
-                <input type="hidden" name="login_type" value="credentials">
-                <input type="text" name="username" placeholder="Username" required>
-                <input type="password" name="password" placeholder="Password" required>
-                <input type="text" name="otp" placeholder="2FA / OTP Code (Optional)">
-                <button type="submit">LOGIN VIA ID</button>
-            </form>
-        </div>
-
-        <!-- OPTION 2: SESSION -->
-        <div class="box">
-            <h3>Option 2: Login via Session JSON</h3>
-            <form method="POST">
-                <input type="hidden" name="login_type" value="session">
-                <input type="text" name="session_user" placeholder="Account Username identifier" required>
-                <textarea name="session_data" rows="5" placeholder='Paste Session JSON payload here...' required></textarea>
-                <button type="submit">LOAD SESSION</button>
-            </form>
-        </div>
-
-        <a href="/dashboard">← Back to Dashboard</a>
-    </body>
-    </html>
-    """
-
-@app.route('/upload-panel', methods=['GET', 'POST'])
-def upload_panel():
-    msg = ""
-    if request.method == 'POST':
+    # 3. HANDLE FILE UPLOADS
+    elif action == 'upload_files':
         file_type = request.form.get('file_type')
         uploaded_files = request.files.getlist('files')
-
         target_dir = MESSAGES_FOLDER if file_type == 'message' else TITLES_FOLDER
-        
         count = 0
         for file in uploaded_files:
             if file and file.filename.endswith('.txt'):
                 file.save(os.path.join(target_dir, file.filename))
                 count += 1
-        
-        msg = f"Successfully uploaded {count} file(s)!"
+        log_line(f"📁 Successfully uploaded {count} {file_type} file(s)!")
+
+    return dashboard_view()
+
+@app.route("/dashboard")
+def dashboard_get():
+    return dashboard_view()
+
+def dashboard_view():
+    logs_html = ""
+    for user in USERS:
+        logs_html += f'<div class="panel-title">User: {user}</div>'
+        for line in logs_ui.get(user, []):
+            logs_html += f'<div class="log-line">{line}</div>'
 
     return f"""
     <html>
     <head>
-        <title>ABHIxPRATIK - File Upload</title>
+        <title>ABHIxPRATIK - All-in-One Control Panel</title>
+        <meta http-equiv="refresh" content="3">
         <style>
-            body {{ background-color: #0d1117; font-family: monospace; padding: 30px; color: #00ff88; }}
-            .box {{ border: 2px solid #00ff88; padding: 20px; max-width: 500px; margin: 0 auto; background: #111827; }}
-            select, input {{ width: 100%; padding: 10px; margin: 10px 0; background: #0d1117; border: 1px solid #00ff88; color: #00ff88; box-sizing: border-box; }}
-            button {{ background: #00ff88; color: #0d1117; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; width: 100%; }}
-            .msg {{ color: #00ff88; margin-bottom: 15px; font-weight: bold; text-align: center; }}
-            a {{ color: #00ff88; text-decoration: none; display: block; text-align: center; margin-top: 15px; }}
+            body {{ background-color: #0d1117; font-family: monospace; margin: 0; padding: 15px; color: #00ff88; }}
+            .header {{ text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 15px; border: 2px solid #00ff88; padding: 10px; }}
+            .grid {{ display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-start; }}
+            .card {{ border: 2px solid #00ff88; background-color: #111827; padding: 15px; flex: 1; min-width: 320px; box-sizing: border-box; }}
+            .card h3 {{ margin-top: 0; border-bottom: 1px solid #00ff88; padding-bottom: 5px; }}
+            input, select, textarea {{ width: 100%; padding: 8px; margin: 6px 0; background: #0d1117; border: 1px solid #00ff88; color: #00ff88; box-sizing: border-box; }}
+            button {{ background: #00ff88; color: #0d1117; border: none; padding: 10px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 5px; }}
+            .log-panel {{ border: 2px solid #00ff88; background-color: #111827; padding: 15px; flex: 2; min-width: 350px; height: 60vh; overflow-y: auto; box-sizing: border-box; }}
+            .panel-title {{ font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #00ff88; padding-bottom: 5px; }}
+            .log-line {{ margin-bottom: 5px; white-space: pre-wrap; font-size: 13px; }}
         </style>
     </head>
     <body>
-        <div class="box">
-            <h3>📁 Upload TXT Files</h3>
-            <div class="msg">{msg}</div>
-            <form method="POST" enctype="multipart/form-data">
-                <label>Target File Type:</label>
-                <select name="file_type">
-                    <option value="message">Spam Message TXT (Multiple Supported)</option>
-                    <option value="title">NC Group Title TXT (Comma/Quotes Supported)</option>
-                </select>
+        <div class="header">✦ ABHIxPRATIK ALL-IN-ONE CONTROL PANEL ✦</div>
+        
+        <div class="grid">
+            <!-- CONTROLS COLUMN -->
+            <div style="flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: 15px;">
                 
-                <input type="file" name="files" accept=".txt" multiple required>
-                <button type="submit">UPLOAD FILES</button>
-            </form>
+                <!-- 1. IDP LOGIN -->
+                <div class="card">
+                    <h3>🔑 Login via ID / Pass / OTP</h3>
+                    <form method="POST">
+                        <input type="hidden" name="action" value="login_creds">
+                        <input type="text" name="username" placeholder="Username" required>
+                        <input type="password" name="password" placeholder="Password" required>
+                        <input type="text" name="otp" placeholder="2FA / OTP Code (if prompted)">
+                        <button type="submit">LOGIN ACCOUNT</button>
+                    </form>
+                </div>
+
+                <!-- 2. SESSION LOGIN -->
+                <div class="card">
+                    <h3>⏳ Login via Session JSON</h3>
+                    <form method="POST">
+                        <input type="hidden" name="action" value="login_session">
+                        <input type="text" name="session_user" placeholder="Account Username" required>
+                        <textarea name="session_data" rows="3" placeholder='Paste Session JSON payload...' required></textarea>
+                        <button type="submit">LOAD SESSION</button>
+                    </form>
+                </div>
+
+                <!-- 3. FILE UPLOADS -->
+                <div class="card">
+                    <h3>📁 Upload TXT Files</h3>
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="action" value="upload_files">
+                        <select name="file_type">
+                            <option value="message">Spam Message TXT (Multiple)</option>
+                            <option value="title">NC Group Title TXT (Quotes/Commas)</option>
+                        </select>
+                        <input type="file" name="files" accept=".txt" multiple required>
+                        <button type="submit">UPLOAD FILES</button>
+                    </form>
+                </div>
+
+            </div>
+
+            <!-- LIVE LOGS CONSOLE -->
+            <div class="log-panel" id="logPanel">
+                <div class="panel-title">📡 Live Execution Console</div>
+                {logs_html}
+            </div>
         </div>
-        <a href="/dashboard">← Back to Dashboard</a>
+
+        <script>
+        function autoScroll() {{
+            var p = document.getElementById('logPanel');
+            p.scrollTop = p.scrollHeight;
+        }}
+        window.onload = autoScroll;
+        </script>
     </body>
     </html>
     """
@@ -317,9 +280,7 @@ def setup_mobile_fingerprint():
         "advertising_id": str(uuid.uuid4()),
         "device_id": "android-" + uuid.uuid4().hex[:16]
     }
-
     cl.set_uuids(uuids)
-
     cl.private.headers.update({
         "X-IG-App-ID": IG_APP_ID,
         "X-IG-Device-ID": uuids["uuid"],
