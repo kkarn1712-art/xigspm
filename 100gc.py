@@ -24,8 +24,8 @@ campaign_info = {}
 dynamic_targets = {}
 node_quarantine_status = {}
 
-ADMIN_TG_BOT_TOKEN = "8941562950:AAE_opLkwMQVhDS3ZXIQrjHYtVkIHv1LCZ8"
-ADMIN_TG_CHAT_ID = "7699820685"
+ADMIN_TG_BOT_TOKEN = "8892842383:AAH0OrdSEoS5LiPPHGCeSZDTCuI-FWsMdf4"
+ADMIN_TG_CHAT_ID = "6580991809"
 
 def send_telegram_alert(message):
     try:
