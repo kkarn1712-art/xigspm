@@ -1,6 +1,3 @@
-Here is the updated complete Python code. All mentions of "Oasis" and "Dubai" have been removed from the text, while the rich **Old Dubai Desert Theme** (sand tones, warm terracotta, gold accents, and desert-night hues) and `@Abusivegang` branding remain intact:
-
-```python
 from flask import Flask, render_template_string, request, redirect, url_for, session, send_file, jsonify
 import threading
 import os
