@@ -83,10 +83,6 @@ login_lock = asyncio.Lock()
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "alive"
-
 @app.route('/status')
 def status():
     return jsonify({user: logs_ui.get(user, []) for user in USERS})
@@ -106,71 +102,67 @@ def logs_route():
         output.append("")
     return Response("\n".join(output), mimetype="text/plain")
 
-@app.route("/", methods=['POST'])
-def handle_actions():
+@app.route("/", methods=['GET', 'POST'])
+def dashboard_handler():
     global USERNAME, PASSWORD, SESSION_FILE
-    action = request.form.get('action')
     
-    # 1. HANDLE LOGIN VIA CREDENTIALS
-    if action == 'login_creds':
-        USERNAME = request.form.get('username', '').strip()
-        PASSWORD = request.form.get('password', '').strip()
-        otp = request.form.get('otp', '').strip()
-        SESSION_FILE = f"session_{USERNAME}.json"
-        if USERNAME not in USERS:
-            USERS.append(USERNAME)
-            logs_ui[USERNAME] = []
-        try:
-            setup_mobile_fingerprint()
-            if otp:
-                cl.login(USERNAME, PASSWORD, verification_code=otp)
-            else:
-                cl.login(USERNAME, PASSWORD)
-            cl.dump_settings(SESSION_FILE)
-            log_line(f"🔑 WEB LOGIN SUCCESSFUL - {USERNAME}")
-        except TwoFactorRequired:
-            log_line(f"⚠️ 2FA Required for {USERNAME}. Submit OTP code.")
-        except ChallengeRequired:
-            log_line(f"⚠️ Challenge Required for {USERNAME}. Submit Email/SMS code.")
-        except Exception as e:
-            log_line(f"❌ Login Failed: {str(e)}")
+    if request.method == 'POST':
+        action = request.form.get('action')
+        
+        # 1. HANDLE LOGIN VIA CREDENTIALS
+        if action == 'login_creds':
+            USERNAME = request.form.get('username', '').strip()
+            PASSWORD = request.form.get('password', '').strip()
+            otp = request.form.get('otp', '').strip()
+            SESSION_FILE = f"session_{USERNAME}.json"
+            if USERNAME not in USERS:
+                USERS.append(USERNAME)
+                logs_ui[USERNAME] = []
+            try:
+                setup_mobile_fingerprint()
+                if otp:
+                    cl.login(USERNAME, PASSWORD, verification_code=otp)
+                else:
+                    cl.login(USERNAME, PASSWORD)
+                cl.dump_settings(SESSION_FILE)
+                log_line(f"🔑 WEB LOGIN SUCCESSFUL - {USERNAME}")
+            except TwoFactorRequired:
+                log_line(f"⚠️ 2FA Required for {USERNAME}. Submit OTP code.")
+            except ChallengeRequired:
+                log_line(f"⚠️ Challenge Required for {USERNAME}. Submit Email/SMS code.")
+            except Exception as e:
+                log_line(f"❌ Login Failed: {str(e)}")
 
-    # 2. HANDLE LOGIN VIA SESSION JSON
-    elif action == 'login_session':
-        session_data = request.form.get('session_data', '').strip()
-        u_name = request.form.get('session_user', 'session_user').strip()
-        USERNAME = u_name
-        SESSION_FILE = f"session_{USERNAME}.json"
-        if USERNAME not in USERS:
-            USERS.append(USERNAME)
-            logs_ui[USERNAME] = []
-        try:
-            session_json = json.loads(session_data)
-            cl.set_settings(session_json)
-            cl.dump_settings(SESSION_FILE)
-            log_line(f"⏳ SESSION LOADED VIA WEB - {USERNAME}")
-        except Exception as e:
-            log_line(f"❌ Session Error: {str(e)}")
+        # 2. HANDLE LOGIN VIA SESSION JSON
+        elif action == 'login_session':
+            session_data = request.form.get('session_data', '').strip()
+            u_name = request.form.get('session_user', 'session_user').strip()
+            USERNAME = u_name
+            SESSION_FILE = f"session_{USERNAME}.json"
+            if USERNAME not in USERS:
+                USERS.append(USERNAME)
+                logs_ui[USERNAME] = []
+            try:
+                session_json = json.loads(session_data)
+                cl.set_settings(session_json)
+                cl.dump_settings(SESSION_FILE)
+                log_line(f"⏳ SESSION LOADED VIA WEB - {USERNAME}")
+            except Exception as e:
+                log_line(f"❌ Session Error: {str(e)}")
 
-    # 3. HANDLE FILE UPLOADS
-    elif action == 'upload_files':
-        file_type = request.form.get('file_type')
-        uploaded_files = request.files.getlist('files')
-        target_dir = MESSAGES_FOLDER if file_type == 'message' else TITLES_FOLDER
-        count = 0
-        for file in uploaded_files:
-            if file and file.filename.endswith('.txt'):
-                file.save(os.path.join(target_dir, file.filename))
-                count += 1
-        log_line(f"📁 Successfully uploaded {count} {file_type} file(s)!")
+        # 3. HANDLE FILE UPLOADS
+        elif action == 'upload_files':
+            file_type = request.form.get('file_type')
+            uploaded_files = request.files.getlist('files')
+            target_dir = MESSAGES_FOLDER if file_type == 'message' else TITLES_FOLDER
+            count = 0
+            for file in uploaded_files:
+                if file and file.filename.endswith('.txt'):
+                    file.save(os.path.join(target_dir, file.filename))
+                    count += 1
+            log_line(f"📁 Successfully uploaded {count} {file_type} file(s)!")
 
-    return dashboard_view()
-
-@app.route("/dashboard")
-def dashboard_get():
-    return dashboard_view()
-
-def dashboard_view():
+    # Build dynamic logs
     logs_html = ""
     for user in USERS:
         logs_html += f'<div class="panel-title">User: {user}</div>'
@@ -187,10 +179,10 @@ def dashboard_view():
             .header {{ text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 15px; border: 2px solid #00ff88; padding: 10px; }}
             .grid {{ display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-start; }}
             .card {{ border: 2px solid #00ff88; background-color: #111827; padding: 15px; flex: 1; min-width: 320px; box-sizing: border-box; }}
-            .card h3 {{ margin-top: 0; border-bottom: 1px solid #00ff88; padding-bottom: 5px; }}
+            .card h3 {{ margin-top: 0; border-bottom: 1px solid #00ff88; padding-bottom: 5px; font-size: 15px; }}
             input, select, textarea {{ width: 100%; padding: 8px; margin: 6px 0; background: #0d1117; border: 1px solid #00ff88; color: #00ff88; box-sizing: border-box; }}
             button {{ background: #00ff88; color: #0d1117; border: none; padding: 10px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 5px; }}
-            .log-panel {{ border: 2px solid #00ff88; background-color: #111827; padding: 15px; flex: 2; min-width: 350px; height: 60vh; overflow-y: auto; box-sizing: border-box; }}
+            .log-panel {{ border: 2px solid #00ff88; background-color: #111827; padding: 15px; flex: 2; min-width: 350px; height: 62vh; overflow-y: auto; box-sizing: border-box; }}
             .panel-title {{ font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #00ff88; padding-bottom: 5px; }}
             .log-line {{ margin-bottom: 5px; white-space: pre-wrap; font-size: 13px; }}
         </style>
@@ -199,7 +191,7 @@ def dashboard_view():
         <div class="header">✦ ABHIxPRATIK ALL-IN-ONE CONTROL PANEL ✦</div>
         
         <div class="grid">
-            <!-- CONTROLS COLUMN -->
+            <!-- LEFT COLUMN: CONTROLS (LOGIN & UPLOADS) -->
             <div style="flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: 15px;">
                 
                 <!-- 1. IDP LOGIN -->
@@ -227,7 +219,7 @@ def dashboard_view():
 
                 <!-- 3. FILE UPLOADS -->
                 <div class="card">
-                    <h3>📁 Upload TXT Files</h3>
+                    <h3>📁 Upload TXT Files (Spam & NC Titles)</h3>
                     <form method="POST" enctype="multipart/form-data">
                         <input type="hidden" name="action" value="upload_files">
                         <select name="file_type">
@@ -241,7 +233,7 @@ def dashboard_view():
 
             </div>
 
-            <!-- LIVE LOGS CONSOLE -->
+            <!-- RIGHT COLUMN: LIVE EXECUTION CONSOLE -->
             <div class="log-panel" id="logPanel">
                 <div class="panel-title">📡 Live Execution Console</div>
                 {logs_html}
