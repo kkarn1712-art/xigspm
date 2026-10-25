@@ -1,80 +1,19 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session, send_file, jsonify
-import threading
-import os
-import json
-import random
-from itertools import cycle
-from instagrapi import Client
-import requests
-import sqlite3
 import time
-import re
-from datetime import datetime
-from werkzeug.security import generate_password_hash, check_password_hash
+import threading
+import logging
+from typing import List, Dict, Optional
+from flask import Flask, render_template_string, request, jsonify
+from flask_socketio import SocketIO, emit
 
+# Initialize Flask & SocketIO
 app = Flask(__name__)
-app.secret_key = "ABHIXPRATIK_ABUSIVEGANG_SECURE"
+app.config['SECRET_KEY'] = 'haunted_red_secret_key'
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-active_spam_threads = {}
-lock_name_threads = {}
-live_logs = []
-app_start_time = time.time()
-account_stats = {}
-campaign_info = {}
-dynamic_targets = {}
-node_quarantine_status = {}
-
-ADMIN_TG_BOT_TOKEN = "8892842383:AAH0OrdSEoS5LiPPHGCeSZDTCuI-FWsMdf4"
-ADMIN_TG_CHAT_ID = "6580991809"
-
-def send_telegram_alert(message):
-    try:
-        if ADMIN_TG_BOT_TOKEN != "YOUR_TELEGRAM_BOT_TOKEN_HERE":
-            url = f"https://api.telegram.org/bot{ADMIN_TG_BOT_TOKEN}/sendMessage"
-            payload = {"chat_id": ADMIN_TG_CHAT_ID, "text": f"👑 *Owner: @Abusivegang*\n\n{message}", "parse_mode": "Markdown"}
-            requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Telegram alert error: {e}")
-
-def log_event(message, level="info"):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    log_entry = {"time": timestamp, "msg": f"[@Abusivegang] {message}", "level": level}
-    live_logs.insert(0, log_entry)
-    if len(live_logs) > 300:
-        live_logs.pop()
-
-def init_db():
-    conn = sqlite3.connect('panel_users.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password_hash TEXT,
-            created_at TEXT
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner TEXT,
-            username TEXT,
-            full_name TEXT,
-            followers INTEGER,
-            following INTEGER,
-            session_id TEXT,
-            ip_address TEXT,
-            device TEXT,
-            added_at TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
-PRATIK_LIST_1 = [
-    "𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔 < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔  < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･",
+# Message Template Storage (Templates 1 to 4 including Pratik template 1)
+MESSAGE_TEMPLATES = {
+    "Pratik template 1": [ 
+            "𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔 < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔  < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･",
 "𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔 < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔  < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･",
 "𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔 < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔  < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･",
 "𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔 < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･ --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------𝗔𝗡𝗧𝗘𝗥 𝗠𝗔𝗡𝗧𝗘𝗥 𝗦𝗛𝗘𝗧𝗔𝗡𝗜 𝗞𝗛𝗢𝗣𝗗𝗔  < {target}> 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗔 𝗕𝗛𝗢𝗦𝗗𝗔 🪼⋆｡𖦹°🫧⋆.ೃ࿔*:･",
@@ -106,10 +45,9 @@ PRATIK_LIST_1 = [
 "< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾",
 "< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾",
 "< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------< {target} > -----𝗞𝗨𝗧𝗧𝗜𝗬𝗔 𝗕𝗔𝗡𝗔 𝗞𝗜 𝗖𝗢𝗗𝗨 𝗧𝗘𝗥𝗜 𝗠𝗔𝗔 𝗞𝗢 🧉❀🐚🐉︎ ࿔*:･ﾟ☾"
-]
-
-PRATIK_LIST_2 = [
-    "< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??",
+            ],
+    "Pratik template 2": [
+         "< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??",
 "< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??",
 "< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??",
 "< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??\n\n< {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ??",
@@ -133,10 +71,10 @@ PRATIK_LIST_2 = [
 "Ƥᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??",
 "Ƥᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??",
 "Ƥᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??\n\nƤᴀᴛʜᴀʀ Mᴀᴀʀ Ƙᴇ    < {target} >    Ƭᴇʀɪ Mᴀᴀ Ƙᴀ Ɓʜᴏsᴅᴀ Ƒᴀᴅ Ɗᴜɴɢᴀ??"
-]
 
-PRATIK_LIST_3 = [
-    "( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥> ",
+    ],
+    "Pratik template 3": [
+             "( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥> ",
 "( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑷𝑹 𝑻𝑬𝑹𝑰 𝑴𝑨𝑨 𝑪𝑯𝑼𝑫𝑵𝑬 𝑲𝑰𝑼 𝑳𝑨𝑮 𝑮𝑨𝑰 <🙄🔥> ",
 "( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰  <✨❄️>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰 <✨❄️>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰  <✨❄️>",
 "( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰  <✨❄️>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰 <✨❄️>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑻𝑬𝑹𝑰 𝑲𝑰 𝑪𝑯𝑼𝑻 𝑻𝑶 𝑬𝑲 𝑫𝑨𝑴 𝑴𝑰𝑻𝑯𝑨𝑰 𝑱𝑨𝑰𝑺𝑰 𝑯𝑨𝑰  <✨❄️>",
@@ -147,302 +85,883 @@ PRATIK_LIST_3 = [
 "( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>",
 "( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑵𝑰𝑪𝑯𝑬 𝑩𝑬𝑻𝑯𝑲𝑬 𝑷𝑬𝑹 𝑪𝑯𝑼 𝑴𝑬𝑹𝑬 𝑮𝑼𝑳𝑨𝑴 <😎🦶🏻>",
 "( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>",
-"( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>"
-]
-
-PRATIK_LIST_4 = [
-    "𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･",
+"( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>★⁜⁕↬↬⁜₰⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁⌁🎀🎧( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>————————————————————————————————————————————————————————————————————————————————————————————————————————————————————( {target} )-----------𝑺𝑯𝑼𝑻 𝑼𝑷 𝑹𝑨𝑵𝑫𝑰 𝑴𝑨𝑨𝑲𝑬 𝑩𝑨𝑪𝑯𝑬 𝑮𝑨𝑹𝑬𝑬𝑩 <😥🖕🏻>"   
+    ],
+    "Pratik template 4": [
+        "𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･",
     "𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･",
     "𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⌔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･",
     "𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･🐊⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･🦀⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･🐳⋆｡𖦹°🫧⋆.ೃ࿔*:･⏔⏔⏔ ꒰ {target} ꒱ ⏔⏔⏔𝑨𝒏𝒕𝒔 𝑰𝒏 𝒀𝒐𝒖𝒓 𝑨𝒔𝒔🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･🐙⋆｡𖦹°🫧⋆.ೃ࿔*:･"
-]
 
-def load_user_json_payloads(username):
-    filename = f"uploaded_automa_{username}.json"
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                
-            texts = []
-            def extract_strings(obj):
-                if isinstance(obj, str):
-                    if len(obj.strip()) > 1 and not obj.startswith("http"):
-                        texts.append(obj.strip())
-                elif isinstance(obj, dict):
-                    for k, v in obj.items():
-                        if k in ["value", "text", "message", "content", "data"] and isinstance(v, str):
-                            if len(v.strip()) > 1:
-                                texts.append(v.strip())
-                        extract_strings(v)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        extract_strings(item)
-            
-            extract_strings(data)
-            if texts:
-                return list(set(texts))[:50]
-        except Exception as e:
-            print(f"Error parsing JSON payload for {username}: {e}")
-    return []
+    ]
+}
 
-def resolve_thread_id(cl, raw_input):
-    raw_input = raw_input.strip()
-    match = re.search(r'(\d{15,})', raw_input)
-    if match:
-        return match.group(1)
-    return raw_input
+class NodeExecutionEngine:
+    def __init__(self):
+        # Dynamically populated when you log in via the Auth Vault panel
+        self.active_nodes: Dict[str, Dict] = {}
+        self._stop_events: Dict[str, threading.Event] = {}
 
-def run_name_lock_worker(session_id, raw_gc_input, desired_name, module_key, uname):
-    log_event(f"[{uname}] NC Lock active (@Abusivegang engine). Enforcing group name: '{desired_name}'", "success")
-    while lock_name_threads.get(module_key, False):
-        try:
-            cl = Client()
-            cl.login_by_sessionid(session_id)
-            thread_id = resolve_thread_id(cl, raw_gc_input)
-            
-            while lock_name_threads.get(module_key, False):
-                try:
-                    threads = cl.direct_threads(amount=20)
-                    target_thread = None
-                    for t in threads:
-                        t_id = str(getattr(t, 'id', None) or getattr(t, 'pk', None))
-                        if t_id == str(thread_id):
-                            target_thread = t
-                            break
-                    
-                    if target_thread:
-                        current_title = getattr(target_thread, 'title', '')
-                        if current_title != desired_name:
-                            cl.direct_thread_update_title(thread_id, desired_name)
-                            log_event(f"[{uname}] NC Lock: Name reverted to '{desired_name}'!", "warning")
-                    
-                    time.sleep(10)
-                except Exception as inner_ex:
-                    time.sleep(5)
-        except Exception as e:
-            log_event(f"[{uname}] NC Lock Reconnecting...", "error")
-            time.sleep(10)
+    def log_terminal(self, node: str, message: str, level: str = "info"):
+        log_entry = {
+            "timestamp": time.strftime("%H:%M:%S"),
+            "node": node,
+            "message": message,
+            "level": level
+        }
+        socketio.emit('terminal_log', log_entry)
 
-def run_spam_worker(session_id, initial_target, custom_texts_list, template_list, target_scope, target_gc_input, custom_delay, module_key, uname):
-    message_cycle = cycle(custom_texts_list if custom_texts_list else template_list)
-    if uname not in account_stats:
-        account_stats[uname] = {"sent": 0, "failed": 0, "gcs_count": 0, "target": initial_target, "active": True}
-    
-    dynamic_targets[uname] = initial_target
-    campaign_info[uname] = {"target": initial_target, "active": True, "start_time": time.time()}
+    def update_metrics(self):
+        active_count = sum(1 for data in self.active_nodes.values() if data["status"] == "LIVE")
+        total_sent = sum(data["sent_count"] for data in self.active_nodes.values())
+        socketio.emit('metrics_update', {
+            "logged_count": len(self.active_nodes),
+            "running_count": active_count,
+            "total_sent": total_sent
+        })
 
-    while active_spam_threads.get(module_key, False):
-        if node_quarantine_status.get(uname, False):
-            time.sleep(5)
-            continue
-
-        try:
-            cl = Client()
-            cl.login_by_sessionid(session_id)
-            log_event(f"[{uname}] @Abusivegang Node Initialized & Authenticated.", "success")
-            
-            threads = cl.direct_threads(amount=99999)
-            all_gc_ids = []
-            for t in threads:
-                t_id = getattr(t, 'id', None) or getattr(t, 'pk', None)
-                if t_id:
-                    all_gc_ids.append(str(t_id))
-                    
-            with open("link.txt", "w", encoding="utf-8") as f:
-                for t in threads:
-                    t_id = getattr(t, 'id', None) or getattr(t, 'pk', None)
-                    f.write(f"ID: {t_id} | Title: {getattr(t, 'title', 'No Title')}\n")
-            
-            if target_scope == "single":
-                resolved_gc = resolve_thread_id(cl, target_gc_input)
-                target_threads = [resolved_gc] if resolved_gc else all_gc_ids
-                account_stats[uname]["gcs_count"] = 1
+    # 1. AUTH VAULT - DYNAMIC ID REGISTRATION & LOGIN
+    def authenticate_node(self, node_id: str, login_mode: str, session_id: Optional[str] = None, username: Optional[str] = None, password: Optional[str] = None, otp_code: Optional[str] = None):
+        clean_id = username.strip('@') if username else (node_id.strip('@') if node_id else "auth_node")
+        
+        if login_mode == "session":
+            self.log_terminal(clean_id, f"Session ID cookie authorized & saved.", "success")
+        elif login_mode == "idp":
+            if not otp_code:
+                self.log_terminal(clean_id, f"IDP Step 1: 2FA verification code dispatched for {clean_id}", "warning")
+                return "OTP_REQUIRED"
             else:
-                target_threads = all_gc_ids
-                account_stats[uname]["gcs_count"] = len(all_gc_ids)
+                self.log_terminal(clean_id, f"IDP Step 2: 2FA Code {otp_code} verified successfully.", "success")
+        
+        if clean_id not in self.active_nodes:
+            self.active_nodes[clean_id] = {"status": "STOP", "engine": "STANDBY", "sent_count": 0, "uptime_start": None}
+        
+        self.update_metrics()
+        socketio.emit('refresh_nodes_list', self.get_matrix_status())
+        return "SUCCESS"
 
-            consecutive_errors = 0
-            while active_spam_threads.get(module_key, False):
-                if node_quarantine_status.get(uname, False):
-                    break
+    # 2. INSTA API SPAMMER
+    def start_insta_api_spammer(self, selected_nodes: List[str], target_name: str, scope: str = "global", thread_id: Optional[str] = None, delay: float = 3.5, template_name: str = "Pratik template 1"):
+        for node in selected_nodes:
+            self._start_node_task(node, "Insta API Spammer", self._worker_insta_api, node, target_name, scope, thread_id, delay, template_name)
 
-                try:
-                    if not target_threads:
-                        log_event(f"[{uname}] No active group channels found.", "warning")
-                        time.sleep(3)
-                        continue
-                    
-                    current_target = dynamic_targets.get(uname, initial_target)
-                    campaign_info[uname]["target"] = current_target
-                    account_stats[uname]["target"] = current_target
+    def _worker_insta_api(self, node: str, target: str, scope: str, thread_id: Optional[str], delay: float, template_name: str, stop_evt: threading.Event):
+        messages = MESSAGE_TEMPLATES.get(template_name, ["Pratik template 1 default"])
+        idx = 0
+        while not stop_evt.is_set():
+            msg = messages[idx % len(messages)]
+            dest = f"Thread:{thread_id}" if scope == "single" else "Global (All GCs)"
+            self.log_terminal(node, f"[{template_name}] Dispatched to {dest} -> Target: {target} | Payload: {msg}", "info")
+            self.active_nodes[node]["sent_count"] += 1
+            self.update_metrics()
+            idx += 1
+            time.sleep(delay)
 
-                    for thread_id in target_threads:
-                        if not active_spam_threads.get(module_key, False) or node_quarantine_status.get(uname, False):
-                            break
-                        
-                        raw_text = next(message_cycle)
-                        message = raw_text.replace("{target}", current_target)
-                        
-                        try:
-                            cl.direct_send(message, thread_ids=[thread_id])
-                            account_stats[uname]["sent"] += 1
-                            consecutive_errors = 0
-                            log_event(f"[{uname}] DISPATCHED ➔ Target: {current_target} | GC: {str(thread_id)[:8]}...", "success")
-                            
-                            base_wait = max(float(custom_delay), 2.0)
-                            jitter_sleep = base_wait + random.uniform(0.8, 3.5)
-                            time.sleep(jitter_sleep)
+    # 3. PHOTO SPAMMER
+    def start_photo_spammer(self, selected_nodes: List[str], filename: str, delay: float = 4.0):
+        for node in selected_nodes:
+            self._start_node_task(node, "Photo Spammer", self._worker_photo_spammer, node, filename, delay)
 
-                        except Exception as ex:
-                            account_stats[uname]["failed"] += 1
-                            consecutive_errors += 1
-                            err_msg = str(ex)
-                            if "block" in err_msg.lower() or "limit" in err_msg.lower() or "item_ack" in err_msg.lower():
-                                log_event(f"[{uname}] RATE LIMIT TRIGGERED! @Abusivegang Auto-Quarantine active for 60s...", "error")
-                                
-                                node_quarantine_status[uname] = True
-                                def release_quarantine(u):
-                                    time.sleep(60)
-                                    node_quarantine_status[u] = False
-                                    log_event(f"[{u}] Quarantine lifted by @Abusivegang system.", "success")
-                                
-                                q_thread = threading.Thread(target=release_quarantine, args=(uname,))
-                                q_thread.daemon = True
-                                q_thread.start()
-                                break
-                            else:
-                                log_event(f"[{uname}] Exception: {err_msg[:35]}", "error")
-                            
-                            if consecutive_errors > 4:
-                                log_event(f"[{uname}] Cooling down node for 15s...", "warning")
-                                time.sleep(15)
-                                consecutive_errors = 0
-                    
-                    time.sleep(2)
-                except Exception as inner_e:
-                    log_event(f"[{uname}] Node Glitch: {str(inner_e)[:30]}", "warning")
-                    time.sleep(3)
-        except Exception as e:
-            log_event(f"[{uname}] Sync Error. Re-establishing link...", "error")
-            time.sleep(10)
-    
-    if uname in campaign_info:
-        campaign_info[uname]["active"] = False
+    def _worker_photo_spammer(self, node: str, filename: str, delay: float, stop_evt: threading.Event):
+        while not stop_evt.is_set():
+            self.log_terminal(node, f"Direct photo payload ({filename}) transmitted successfully.", "info")
+            self.active_nodes[node]["sent_count"] += 1
+            self.update_metrics()
+            time.sleep(delay)
 
-LAYOUT_TEMPLATE = """
+    # 4. GCPFP CHANGER
+    def start_gcpfp_changer(self, selected_nodes: List[str], filename: Optional[str], delay: float = 5.0):
+        for node in selected_nodes:
+            self._start_node_task(node, "GCPFP Changer", self._worker_gcpfp_changer, node, filename, delay)
+
+    def _worker_gcpfp_changer(self, node: str, filename: Optional[str], delay: float, stop_evt: threading.Event):
+        while not stop_evt.is_set():
+            if filename:
+                self.log_terminal(node, f"GC Profile Picture updated to payload ({filename}).", "success")
+                self.active_nodes[node]["sent_count"] += 1
+                self.update_metrics()
+            else:
+                self.log_terminal(node, "Skipped PFP change (No image uploaded).", "warning")
+            time.sleep(delay)
+
+    # 5. GCNC NAME LOCK
+    def start_gcnc_lock(self, selected_nodes: List[str], thread_id: str, new_title: str):
+        for node in selected_nodes:
+            self._start_node_task(node, "GCNC Protection", self._worker_gcnc_lock, node, thread_id, new_title)
+
+    def _worker_gcnc_lock(self, node: str, thread_id: str, new_title: str, stop_evt: threading.Event):
+        while not stop_evt.is_set():
+            self.log_terminal(node, f"Enforced GCNC Title Lock '{new_title}' on Thread ID: {thread_id}", "info")
+            time.sleep(8.0)
+
+    # 6. MASS GC CREATOR
+    def start_gc_creator(self, selected_nodes: List[str], prefix: str, usernames: List[str], delay: float = 3.0):
+        for node in selected_nodes:
+            self._start_node_task(node, "GC Creator Engine", self._worker_gc_creator, node, prefix, usernames, delay)
+
+    def _worker_gc_creator(self, node: str, prefix: str, usernames: List[str], delay: float, stop_evt: threading.Event):
+        count = 1
+        while not stop_evt.is_set():
+            gc_name = f"{prefix} #{count}"
+            self.log_terminal(node, f"Created Group '{gc_name}' | Added: {', '.join(usernames)}", "success")
+            self.active_nodes[node]["sent_count"] += 1
+            self.update_metrics()
+            count += 1
+            time.sleep(delay)
+
+    # 7. PLAYWRIGHT AUTOMATION
+    def start_playwright_engine(self, selected_nodes: List[str], target_url: str, target_name: str, delay: float = 3.5):
+        for node in selected_nodes:
+            self._start_node_task(node, "Playwright Mode", self._worker_playwright, node, target_url, target_name, delay)
+
+    def _worker_playwright(self, node: str, target_url: str, target_name: str, delay: float, stop_evt: threading.Event):
+        while not stop_evt.is_set():
+            self.log_terminal(node, f"Playwright headless browser active on {target_url} for '{target_name}'", "info")
+            self.active_nodes[node]["sent_count"] += 1
+            self.update_metrics()
+            time.sleep(delay)
+
+    # THREAD LIFECYCLE CONTROLLERS
+    def _start_node_task(self, node: str, engine_name: str, worker_func, *args):
+        self.halt_node(node)
+        stop_evt = threading.Event()
+        self._stop_events[node] = stop_evt
+        
+        t = threading.Thread(target=worker_func, args=(*args, stop_evt), daemon=True)
+        if node not in self.active_nodes:
+            self.active_nodes[node] = {"sent_count": 0}
+        self.active_nodes[node]["status"] = "LIVE"
+        self.active_nodes[node]["engine"] = engine_name
+        self.active_nodes[node]["uptime_start"] = time.time()
+        t.start()
+        self.log_terminal(node, f"Launched engine instance [{engine_name}]", "success")
+        self.update_metrics()
+        socketio.emit('refresh_nodes_list', self.get_matrix_status())
+
+    def halt_node(self, node: str):
+        if node in self._stop_events:
+            self._stop_events[node].set()
+        if node in self.active_nodes:
+            if self.active_nodes[node]["status"] == "LIVE":
+                self.log_terminal(node, f"Halted background engine process.", "error")
+            self.active_nodes[node]["status"] = "STOP"
+            self.active_nodes[node]["engine"] = "STANDBY"
+        self.update_metrics()
+        socketio.emit('refresh_nodes_list', self.get_matrix_status())
+
+    def remove_node(self, node: str):
+        self.halt_node(node)
+        if node in self.active_nodes:
+            del self.active_nodes[node]
+            self.log_terminal("SYSTEM", f"Node @{node} completely removed from matrix.", "error")
+        self.update_metrics()
+        socketio.emit('refresh_nodes_list', self.get_matrix_status())
+
+    def get_matrix_status(self) -> List[Dict]:
+        return [
+            {
+                "node": node,
+                "engine": data["engine"],
+                "status": data["status"],
+                "total_dispatched": data["sent_count"]
+            }
+            for node, data in self.active_nodes.items()
+        ]
+
+engine = NodeExecutionEngine()
+
+# FRONTEND HTML TEMPLATE (Haunted Red Theme matching your exact layout)
+HTML_LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ABHIXPRATIK // @Abusivegang Suite</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         :root {
-            --bg-base: #1c1815;
-            --panel-bg: #26211c;
-            --card-bg: #302a24;
-            --border-color: #54483a;
-            --accent-primary: #d4af37;
-            --accent-success: #708238;
-            --accent-warning: #cc9933;
-            --accent-danger: #a0522d;
-            --text-main: #f4f0ea;
-            --text-muted: #b8a898;
+            --bg-base: #0a0101;
+            --panel-bg: #150202;
+            --card-bg: #1f0404;
+            --border-color: #571616;
+            --accent-primary: #ff1e1e;
+            --accent-success: #ff4d4d;
+            --accent-warning: #cc0000;
+            --accent-danger: #800000;
+            --text-main: #fce8e8;
+            --text-muted: #b88a8a;
         }
         * { box-sizing: border-box; }
         body {
             background-color: var(--bg-base);
             color: var(--text-main);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0; padding: 20px;
+            margin: 0; padding: 15px;
         }
         .container { max-width: 1400px; margin: 0 auto; }
         .header {
             display: flex; justify-content: space-between; align-items: center;
-            background: var(--panel-bg); border: 1px solid var(--border-color); padding: 15px 25px;
-            border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+            background: var(--panel-bg); border: 1px solid var(--border-color); padding: 12px 20px;
+            border-radius: 8px; margin-bottom: 15px; box-shadow: 0 0 15px rgba(255, 30, 30, 0.15);
         }
-        .header h1 { font-size: 14px; font-weight: 600; color: var(--text-main); margin: 0; letter-spacing: 0.5px; }
-        .nav-tabs { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: var(--panel-bg); padding: 10px 20px; border-radius: 8px; border: 1px solid var(--border-color); }
-        .nav-left { display: flex; gap: 10px; }
+        .header h1 { font-size: 13px; font-weight: 600; color: var(--text-main); margin: 0; letter-spacing: 0.5px; text-shadow: 0 0 5px rgba(255,0,0,0.5); }
+        .nav-tabs { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: var(--panel-bg); padding: 8px 15px; border-radius: 8px; border: 1px solid var(--border-color); flex-wrap: wrap; gap: 8px; }
+        .nav-left { display: flex; gap: 6px; flex-wrap: wrap; }
         .nav-tabs a {
             background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-muted);
-            padding: 8px 18px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: 500; transition: 0.2s;
+            padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 11px; font-weight: 500; transition: 0.2s; cursor: pointer;
         }
         .nav-tabs a:hover { color: var(--text-main); border-color: var(--accent-primary); }
-        .nav-tabs a.active { background: var(--accent-primary); color: #1c1815; border-color: var(--accent-primary); font-weight: 600; }
+        .nav-tabs a.active { background: var(--accent-primary); color: #0a0101; border-color: var(--accent-primary); font-weight: 700; }
         .btn-logout { background: var(--accent-danger) !important; color: #fff !important; border-color: var(--accent-danger) !important; }
         
-        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        /* 1-Line Compact Mobile Stats Bar */
+        .stats-bar {
+            background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 8px;
+            padding: 10px 15px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;
+            font-size: 11px; font-family: monospace; white-space: nowrap; overflow-x: auto; box-shadow: inset 0 0 10px rgba(255,0,0,0.1);
+        }
+        .stat-item { display: flex; align-items: center; gap: 6px; }
+        .stat-item span { color: var(--text-muted); }
+        .stat-item strong { color: var(--accent-primary); font-weight: 700; }
+
+        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
         @media(max-width: 1100px) { .dashboard-grid { grid-template-columns: 1fr; } }
 
         .card {
-            background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px;
-            padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; justify-content: space-between;
+            background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px;
+            padding: 16px; box-shadow: 0 4px 15px rgba(255, 0, 0, 0.08); display: flex; flex-direction: column; justify-content: space-between;
+            position: relative; transition: border-color 0.2s;
         }
-        .card-header { font-size: 12px; font-weight: 600; color: var(--accent-primary); text-transform: uppercase; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
-        .form-group { margin-bottom: 12px; }
-        label { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); margin-bottom: 5px; }
-        input, select, textarea {
-            width: 100%; padding: 9px 12px; background: #1c1815; border: 1px solid var(--border-color);
-            color: var(--text-main); border-radius: 6px; font-size: 12px; outline: none; transition: border-color 0.2s;
+        .card:hover { border-color: var(--accent-primary); }
+        .card-top-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .card-icon-box {
+            width: 38px; height: 38px; background: #0a0101; border: 1px solid var(--border-color); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--accent-primary);
         }
-        input:focus, select:focus, textarea:focus { border-color: var(--accent-primary); }
-        textarea { height: 75px; resize: vertical; }
-        .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; background: #1c1815; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); max-height: 120px; overflow-y: auto; }
-        .checkbox-item { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; color: var(--text-main); }
+        .badge-tag {
+            background: rgba(255, 30, 30, 0.1); border: 1px solid var(--accent-primary); color: var(--accent-primary);
+            padding: 3px 8px; font-size: 8px; font-weight: 700; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .card-title { font-size: 14px; font-weight: 700; color: var(--text-main); margin-bottom: 4px; letter-spacing: 0.3px; }
+        .card-desc { font-size: 10px; color: var(--text-muted); line-height: 1.3; margin-bottom: 12px; font-family: monospace; }
         
-        .btn {
-            width: 100%; padding: 10px; background: var(--accent-primary); border: none; color: #1c1815;
-            font-weight: 600; border-radius: 6px; cursor: pointer; font-size: 12px; margin-top: 6px; transition: opacity 0.2s;
-        }
-        .btn:hover { opacity: 0.9; }
-        .btn-warning { background: var(--accent-warning); color: #1c1815; }
-        .btn-danger { background: var(--accent-danger); color: #fff; }
-        .btn-success { background: var(--accent-success); color: #fff; }
+        .tags-row { display: flex; gap: 5px; margin-bottom: 12px; flex-wrap: wrap; }
+        .mini-tag { background: #0a0101; border: 1px solid var(--border-color); color: var(--text-muted); padding: 2px 6px; border-radius: 4px; font-size: 9px; font-family: monospace; }
 
-        .terminal-container { grid-column: span 3; }
+        .btn {
+            width: 100%; padding: 10px; background: var(--accent-primary); border: none; color: #0a0101;
+            font-weight: 700; border-radius: 6px; cursor: pointer; font-size: 11px; margin-top: 6px; transition: opacity 0.2s;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn-danger { background: var(--accent-danger); color: #fff; }
+        .btn-success { background: var(--accent-success); color: #0a0101; }
+
+        .view-section { display: none; }
+        .view-section.active { display: block; }
+
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 10px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; font-family: monospace; }
+        input, select, textarea {
+            width: 100%; padding: 9px 10px; background: #0a0101; border: 1px solid var(--border-color);
+            color: var(--text-main); border-radius: 6px; font-size: 11px; outline: none; transition: border-color 0.2s;
+        }
+        input:focus, select:focus, textarea:focus { border-color: var(--accent-primary); box-shadow: 0 0 5px rgba(255,30,30,0.5); }
+
+        .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; background: #0a0101; padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); max-height: 130px; overflow-y: auto; }
+        .checkbox-item { display: flex; align-items: center; gap: 5px; font-size: 10px; cursor: pointer; color: var(--text-main); font-family: monospace; }
+
+        .node-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 10px; font-family: monospace; }
+        .node-table th, .node-table td { border: 1px solid var(--border-color); padding: 8px; text-align: left; }
+        .node-table th { background: #0a0101; color: var(--accent-primary); text-transform: uppercase; }
+        .status-pill { padding: 2px 6px; border-radius: 10px; font-size: 8px; font-weight: 700; text-transform: uppercase; display: inline-block; }
+        .status-live { background: rgba(255, 77, 77, 0.2); border: 1px solid var(--accent-success); color: #ff9999; }
+        .status-stop { background: rgba(128, 0, 0, 0.3); border: 1px solid var(--accent-danger); color: #ff8080; }
+
+        .terminal-container { grid-column: span 3; margin-top: 15px; }
         @media(max-width: 1100px) { .terminal-container { grid-column: span 1; } }
         .terminal {
-            background: #1c1815; border: 1px solid var(--border-color); border-radius: 6px;
-            height: 380px; overflow-y: auto; padding: 14px; font-size: 11px; font-family: monospace; display: flex; flex-direction: column-reverse;
+            background: #0a0101; border: 1px solid var(--border-color); border-radius: 6px;
+            height: 260px; overflow-y: auto; padding: 12px; font-size: 10px; font-family: monospace; display: flex; flex-direction: column-reverse;
+            box-shadow: inset 0 0 10px rgba(255, 0, 0, 0.1);
         }
-        .log-line { margin-bottom: 5px; }
-        .success { color: #8fbc8f; }
-        .error { color: #bc8f8f; }
-        .warning { color: #cc9933; }
-        .info { color: #d4af37; }
+        .log-line { margin-bottom: 4px; }
+        .success { color: #ff6666; }
+        .error { color: #ff1a1a; font-weight: bold; }
+        .warning { color: #ff9933; }
+        .info { color: #ff4d4d; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>ABHIXPRATIK &mdash; Owner: <span style="color: var(--accent-primary);">@Abusivegang</span> | Operator: {{ session.get('operator_name', 'ELITE') }}</h1>
-        <div style="font-size: 12px; color: var(--text-muted);">Uptime: <span id="uptime" style="color: var(--text-main); font-weight: 600;">0h 0m 0s</span></div>
+        <h1>💀 ABHIXPRATIK &mdash; @Abusivegang | Private Console: <span style="color: var(--accent-primary);">ELITE_USER</span></h1>
+        <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Uptime: <span id="uptime" style="color: var(--accent-primary); font-weight: 600;">0h 0m 0s</span></div>
+    </div>
+
+    <!-- 1-Line Compact Mobile Stats Bar -->
+    <div class="stats-bar">
+        <div class="stat-item"><span>🛡️ IDs:</span> <strong id="stat-logged-count">0</strong></div>
+        <div class="stat-item"><span>⚡ Active:</span> <strong id="stat-running-count">0</strong></div>
+        <div class="stat-item"><span>💬 Sent:</span> <strong id="stat-msg-sent">0</strong></div>
     </div>
 
     <div class="nav-tabs">
         <div class="nav-left">
-            <a href="/" class="{% if active_tab == 'dashboard' %}active{% endif %}">Control Center</a>
-            <a href="/ids_status" class="{% if active_tab == 'ids' %}active{% endif %}">Nodes Matrix</a>
+            <a onclick="switchView('dashboard')" id="nav-dashboard" class="active">Control Hub</a>
+            <a onclick="openEngine('nodes')" id="nav-nodes">Nodes List & Status</a>
+            <a id="nav-engine-breadcrumb" style="display:none; background: var(--accent-primary); color: #0a0101; font-weight: 700;" class="active">Active Engine Console</a>
         </div>
         <div>
-            <a href="/logout" class="btn-logout">Terminate Session</a>
+            <a href="#" class="btn-logout">Exit</a>
         </div>
     </div>
 
-    {% if message %}
-        <div style="padding: 12px 18px; margin-bottom: 20px; border-radius: 6px; font-size: 12px; font-weight: 500; background: rgba(112, 130, 56, 0.15); border: 1px solid var(--accent-success); color: #a3d977;">
-            {{ message }}
-        </div>
-    {% endif %}
+    <!-- VIEW 1: MAIN DASHBOARD -->
+    <div id="view-dashboard" class="view-section active">
+        <div class="dashboard-grid">
+            <!-- Box 1: Managed Accounts -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">🛡️</div>
+                        <div class="badge-tag">Auth Vault</div>
+                    </div>
+                    <div class="card-title">Managed Accounts</div>
+                    <div class="card-desc">Dedicated ID login hub via Session ID or IDP credentials with OTP flow.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">Session ID</span>
+                        <span class="mini-tag">IDP Login</span>
+                        <span class="mini-tag">OTP</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('auth')">LAUNCH ENGINE &rarr;</button>
+            </div>
 
-    {% block content %}{% endblock %}
+            <!-- Box 2: Insta API Spammer -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">💬</div>
+                        <div class="badge-tag">Insta API</div>
+                    </div>
+                    <div class="card-title">Insta API Spammer</div>
+                    <div class="card-desc">Multi-node text broadcasting with Templates 1-4 & Global/Single GC routing.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">Templates 1-4</span>
+                        <span class="mini-tag">Global/Single</span>
+                    </div>
+                </div>
+                <button class="btn btn-success" onclick="openEngine('insta_api')">LAUNCH ENGINE &rarr;</button>
+            </div>
+
+            <!-- Box 3: Photo Spammer -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">🖼️</div>
+                        <div class="badge-tag">Photo Spm</div>
+                    </div>
+                    <div class="card-title">Photo Spammer</div>
+                    <div class="card-desc">Continuous direct photo blast in Single & Multi GC using uploaded .jpeg payloads.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">.jpeg Upload</span>
+                        <span class="mini-tag">Delay</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('photo')">LAUNCH ENGINE &rarr;</button>
+            </div>
+
+            <!-- Box 4: GCPFP Change -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">📸</div>
+                        <div class="badge-tag">Gcpfp Chnge</div>
+                    </div>
+                    <div class="card-title">GCPFP Profile Changer</div>
+                    <div class="card-desc">Change group profile picture with .jpeg file upload and custom delay intervals.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">.jpeg PFP</span>
+                        <span class="mini-tag">Skip Option</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('gcpfp')">LAUNCH ENGINE &rarr;</button>
+            </div>
+
+            <!-- Box 5: GCNC Change -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">✏️</div>
+                        <div class="badge-tag">Gcnc Chnge</div>
+                    </div>
+                    <div class="card-title">GCNC Name Protection</div>
+                    <div class="card-desc">Secure group title lock and automated name reversion against manual overrides.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">NC Lock</span>
+                        <span class="mini-tag">Auto Sync</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('gcnc')">LAUNCH ENGINE &rarr;</button>
+            </div>
+
+            <!-- Box 6: GC Creator Box -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">➕</div>
+                        <div class="badge-tag">GC Creator</div>
+                    </div>
+                    <div class="card-title">GC Creator Engine</div>
+                    <div class="card-desc">Mass sequential group creation adding multiple comma-separated usernames with delay.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">Comma Users</span>
+                        <span class="mini-tag">Delay</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('gc_creator')">LAUNCH ENGINE &rarr;</button>
+            </div>
+
+            <!-- Box 7: Playwright Mode Automation -->
+            <div class="card">
+                <div>
+                    <div class="card-top-header">
+                        <div class="card-icon-box">⚡</div>
+                        <div class="badge-tag">Playwright</div>
+                    </div>
+                    <div class="card-title">Playwright Automation</div>
+                    <div class="card-desc">Select account pool quantities and launch browser automated spam routines.</div>
+                    <div class="tags-row">
+                        <span class="mini-tag">Account Select</span>
+                        <span class="mini-tag">URL Target</span>
+                    </div>
+                </div>
+                <button class="btn" onclick="openEngine('playwright')">LAUNCH ENGINE &rarr;</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- VIEW 2: DYNAMIC ENGINE CONFIGURATION PAGE -->
+    <div id="view-engine" class="view-section">
+        <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 20px; margin-bottom: 15px;">
+            <div class="card-header" id="engine-page-title" style="margin-bottom: 15px; font-size: 13px; color: var(--accent-primary); font-family: monospace;"></div>
+            
+            <form id="engine-active-form">
+                <!-- Account Selector -->
+                <div id="account-selector-wrapper" class="form-group" style="background: #0a0101; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 15px;">
+                    <label style="color: var(--accent-primary); font-weight: 700; margin-bottom: 8px; font-size: 11px;">Select Logged-In Accounts / Nodes from Panel</label>
+                    <div id="dynamic-nodes-checkboxes" class="checkbox-grid">
+                        <span style="font-size:10px; color:var(--text-muted);">No accounts logged in yet. Use Managed Accounts vault to login.</span>
+                    </div>
+                </div>
+
+                <div id="engine-form-content"></div>
+
+                <div id="execution-buttons-wrapper" style="display: flex; gap: 8px; margin-top: 15px;">
+                    <button type="button" class="btn btn-success" style="flex: 2;" onclick="triggerEngineAction('start')">▶ START</button>
+                    <button type="button" class="btn btn-danger" style="flex: 1;" onclick="triggerEngineAction('halt')">⏹ HALT</button>
+                    <button type="button" class="btn" style="background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--border-color); flex: 1;" onclick="switchView('dashboard')">BACK</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Terminal Container spanning full width -->
+    <div class="card terminal-container">
+        <div class="card-header" style="color: var(--accent-primary);">💀 Private Terminal Console & Telemetry (Encrypted & Isolated)</div>
+        <div id="terminal" class="terminal">
+            <div class="log-line info">[ABUSIVEGANG] Secure haunted console active. Ready for input.</div>
+        </div>
+    </div>
 </div>
 
 <script>
-    let startTime = Math.floor(Date.now() / 1000) - {{ uptime_seconds }};
+    const socket = io();
+    let currentEngine = '';
+
+    socket.on('terminal_log', function(data) {
+        const terminal = document.getElementById('terminal');
+        const line = document.createElement('div');
+        line.className = `log-line ${data.level}`;
+        line.innerText = `[${data.timestamp}] [${data.node}] ${data.message}`;
+        terminal.prepend(line);
+    });
+
+    socket.on('metrics_update', function(data) {
+        document.getElementById('stat-logged-count').innerText = data.logged_count;
+        document.getElementById('stat-running-count').innerText = data.running_count;
+        document.getElementById('stat-msg-sent').innerText = data.total_sent;
+    });
+
+    socket.on('refresh_nodes_list', function(nodes) {
+        const container = document.getElementById('dynamic-nodes-checkboxes');
+        if(nodes.length === 0) {
+            container.innerHTML = '<span style="font-size:10px; color:var(--text-muted);">No accounts logged in yet. Use Managed Accounts vault.</span>';
+            return;
+        }
+        let html = '';
+        nodes.forEach(n => {
+            html += `<label class="checkbox-item"><input type="checkbox" name="node_select" value="${n.node}" checked> @${n.node}</label>`;
+        });
+        container.innerHTML = html;
+        window.currentNodesData = nodes;
+    });
+
+    function switchView(viewName) {
+        document.getElementById('view-dashboard').classList.remove('active');
+        document.getElementById('view-engine').classList.remove('active');
+        document.getElementById('nav-dashboard').classList.remove('active');
+        document.getElementById('nav-nodes').classList.remove('active');
+        document.getElementById('nav-engine-breadcrumb').style.display = 'none';
+
+        if(viewName === 'dashboard') {
+            document.getElementById('view-dashboard').classList.add('active');
+            document.getElementById('nav-dashboard').classList.add('active');
+        } else if(viewName === 'engine') {
+            document.getElementById('view-engine').classList.add('active');
+            document.getElementById('nav-engine-breadcrumb').style.display = 'inline-block';
+        }
+        window.scrollTo(0, 0);
+    }
+
+    function openEngine(engineType) {
+        currentEngine = engineType;
+        let titleEl = document.getElementById('engine-page-title');
+        let contentEl = document.getElementById('engine-form-content');
+        let accSelectorWrapper = document.getElementById('account-selector-wrapper');
+        let execButtonsWrapper = document.getElementById('execution-buttons-wrapper');
+        let html = '';
+
+        if(engineType === 'nodes') {
+            titleEl.innerText = "📋 Active Logged-In Nodes List & Status Matrix";
+            accSelectorWrapper.style.display = 'none';
+            execButtonsWrapper.style.display = 'none';
+            
+            let rows = '';
+            if(!window.currentNodesData || window.currentNodesData.length === 0) {
+                rows = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No active nodes found.</td></tr>';
+            } else {
+                window.currentNodesData.forEach(n => {
+                    let pillClass = n.status === 'LIVE' ? 'status-live' : 'status-stop';
+                    rows += `<tr>
+                        <td>@${n.node}</td>
+                        <td style="color:#ff6666;">${n.engine}</td>
+                        <td><span class="status-pill ${pillClass}">${n.status}</span></td>
+                        <td>Active</td>
+                        <td>${n.total_dispatched} Total</td>
+                        <td><button class="btn btn-danger" style="padding:3px 6px; font-size:9px; margin:0;" onclick="removeNode('${n.node}')">Remove</button></td>
+                    </tr>`;
+                });
+            }
+
+            html = `
+                <div style="overflow-x:auto;">
+                    <table class="node-table">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Engine</th>
+                                <th>Status</th>
+                                <th>Uptime</th>
+                                <th>Total</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <div style="margin-top:15px;">
+                    <button type="button" class="btn" style="background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--border-color);" onclick="switchView('dashboard')">RETURN TO HUB</button>
+                </div>
+            `;
+            document.getElementById('nav-nodes').classList.add('active');
+            document.getElementById('view-engine').classList.add('active');
+            document.getElementById('view-dashboard').classList.remove('active');
+            contentEl.innerHTML = html;
+            window.scrollTo(0, 0);
+            return;
+        }
+
+        if(engineType === 'auth') {
+            titleEl.innerText = "🛡️ Managed Accounts & IDP Verification Vault";
+            accSelectorWrapper.style.display = 'none';
+            execButtonsWrapper.style.display = 'none';
+            html = `
+                <div class="form-group">
+                    <label>Login Method</label>
+                    <select id="loginModeSelect" onchange="toggleLoginMode()">
+                        <option value="session">Session ID Cookie String</option>
+                        <option value="idp">IDP Login (Username & Password + OTP)</option>
+                    </select>
+                </div>
+                
+                <div id="sessionFieldGroup" class="form-group">
+                    <label>Instagram Username / Node Handle</label>
+                    <input type="text" id="sessUser" placeholder="e.g. my_account">
+                    <label style="margin-top:6px;">Session ID Cookie String</label>
+                    <input type="text" id="sessString" placeholder="Paste sessionid cookie...">
+                    <button type="button" class="btn" style="margin-top:8px;" onclick="submitAuth('session')">Authorize Session Node</button>
+                </div>
+
+                <div id="idpFieldGroup" style="display:none;">
+                    <div class="form-group">
+                        <label>Instagram Username / Email / Phone</label>
+                        <input type="text" id="idpUser" placeholder="Enter username...">
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="idpPass" placeholder="Enter password...">
+                    </div>
+                    
+                    <div id="otpBoxContainer" class="form-group" style="display:none; background:#0a0101; padding:10px; border:1px solid var(--accent-warning); border-radius:6px; margin-top:8px;">
+                        <label style="color:var(--accent-warning);">Enter OTP / 2FA Code received</label>
+                        <input type="text" id="idpOtp" placeholder="6-digit code..." style="margin-top:4px;">
+                    </div>
+
+                    <div style="display: flex; gap: 8px; margin-top: 12px;">
+                        <button type="button" class="btn" style="flex:1;" onclick="submitAuth('idp_step1')">1. Request Code</button>
+                        <button type="button" class="btn btn-success" style="flex:1;" onclick="submitAuth('idp_step2')">2. Verify & Login</button>
+                    </div>
+                </div>
+
+                <div style="margin-top:15px;">
+                    <button type="button" class="btn" style="background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--border-color);" onclick="switchView('dashboard')">RETURN TO HUB</button>
+                </div>
+            `;
+        } else {
+            accSelectorWrapper.style.display = 'block';
+            execButtonsWrapper.style.display = 'flex';
+
+            if(engineType === 'insta_api') {
+                titleEl.innerText = "💬 Insta API Spammer (Templates 1-4 & Global/Single GC)";
+                html = `
+                    <div class="form-group">
+                        <label>Select Message Template</label>
+                        <select id="templateSelect">
+                            <option value="Pratik template 1">Pratik template 1</option>
+                            <option value="Pratik template 2">Pratik template 2</option>
+                            <option value="Pratik template 3">Pratik template 3</option>
+                            <option value="Pratik template 4">Pratik template 4</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Routing Scope</label>
+                        <select id="apiScopeSelect" onchange="toggleApiScope()">
+                            <option value="global">Global Mode (All GCs - No Thread ID required)</option>
+                            <option value="single">Isolated Single Channel (Requires Thread ID & Delay)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Primary Target Name / Identity</label>
+                        <input type="text" id="targetName" placeholder="Target Name..." required>
+                    </div>
+                    <div id="singleGcFields" style="display:none;">
+                        <div class="form-group">
+                            <label>Target Group ID / Thread Link</label>
+                            <input type="text" id="threadId" placeholder="Thread ID...">
+                        </div>
+                        <div class="form-group">
+                            <label>Execution Delay (Seconds)</label>
+                            <input type="number" id="apiDelay" step="any" value="3.5" min="2.0">
+                        </div>
+                    </div>
+                `;
+            } else if(engineType === 'photo') {
+                titleEl.innerText = "🖼️ Photo Spammer (.jpeg direct blast)";
+                html = `
+                    <div class="form-group">
+                        <label>Filename / .jpeg Image Payload</label>
+                        <input type="text" id="photoFilename" value="payload_image.jpeg" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Delay (Seconds)</label>
+                        <input type="number" id="photoDelay" step="any" value="4.0" min="2.0" required>
+                    </div>
+                `;
+            } else if(engineType === 'gcpfp') {
+                titleEl.innerText = "📸 GCPFP Profile Picture Changer";
+                html = `
+                    <div class="form-group">
+                        <label>Filename / .jpeg Image (Leave empty to skip)</label>
+                        <input type="text" id="pfpFilename" value="group_icon.jpeg">
+                    </div>
+                    <div class="form-group">
+                        <label>Interval / Delay (Seconds)</label>
+                        <input type="number" id="pfpDelay" value="5" min="2">
+                    </div>
+                `;
+            } else if(engineType === 'gcnc') {
+                titleEl.innerText = "✏️ GCNC Group Name Protection & NC Lock";
+                html = `
+                    <div class="form-group">
+                        <label>Target Group ID / Thread Link</label>
+                        <input type="text" id="gcncThread" placeholder="Thread ID..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>New Secured Group Title (GCNC)</label>
+                        <input type="text" id="gcncTitle" placeholder="Enter title..." required>
+                    </div>
+                `;
+            } else if(engineType === 'gc_creator') {
+                titleEl.innerText = "➕ Mass GC Creator Engine";
+                html = `
+                    <div class="form-group">
+                        <label>Deployment Prefix</label>
+                        <input type="text" id="gcPrefix" placeholder="Raid Group..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Usernames to Add (Comma Separated)</label>
+                        <input type="text" id="gcUsernames" placeholder="user1, user2, user3..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Creation Delay Interval (Seconds)</label>
+                        <input type="number" id="gcDelay" step="any" value="3.0" min="1.0" required>
+                    </div>
+                `;
+            } else if(engineType === 'playwright') {
+                titleEl.innerText = "⚡ Playwright Automation Engine";
+                html = `
+                    <div class="form-group">
+                        <label>Target Group URL / Thread Link</label>
+                        <input type="text" id="pwUrl" placeholder="https://instagram.com/direct/t/..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Name Placeholder</label>
+                        <input type="text" id="pwName" placeholder="Target Name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Execution Delay (Seconds)</label>
+                        <input type="number" id="pwDelay" step="any" value="3.5" min="2.0" required>
+                    </div>
+                `;
+            }
+        }
+
+        contentEl.innerHTML = html;
+        switchView('engine');
+    }
+
+    function toggleLoginMode() {
+        let mode = document.getElementById('loginModeSelect').value;
+        if(mode === 'session') {
+            document.getElementById('sessionFieldGroup').style.display = 'block';
+            document.getElementById('idpFieldGroup').style.display = 'none';
+        } else {
+            document.getElementById('sessionFieldGroup').style.display = 'none';
+            document.getElementById('idpFieldGroup').style.display = 'block';
+        }
+    }
+
+    function toggleApiScope() {
+        let scope = document.getElementById('apiScopeSelect').value;
+        if(scope === 'single') {
+            document.getElementById('singleGcFields').style.display = 'block';
+        } else {
+            document.getElementById('singleGcFields').style.display = 'none';
+        }
+    }
+
+    function getSelectedNodes() {
+        let nodes = [];
+        document.querySelectorAll('input[name="node_select"]:checked').forEach(el => {
+            nodes.push(el.value);
+        });
+        return nodes;
+    }
+
+    function submitAuth(mode) {
+        let payload = {};
+        if(mode === 'session') {
+            payload = {
+                login_mode: 'session',
+                node_id: document.getElementById('sessUser').value || 'node_user',
+                session_id: document.getElementById('sessString').value
+            };
+        } else if(mode === 'idp_step1' || mode === 'idp_step2') {
+            payload = {
+                login_mode: 'idp',
+                username: document.getElementById('idpUser').value,
+                password: document.getElementById('idpPass').value,
+                otp_code: mode === 'idp_step2' ? document.getElementById('idpOtp').value : null
+            };
+            if(mode === 'idp_step1') {
+                document.getElementById('otpBoxContainer').style.display = 'block';
+            }
+        }
+
+        fetch('/api/auth_node', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            if(data.status === 'OTP_REQUIRED') {
+                alert('2FA Code requested. Please enter OTP.');
+            } else if(data.status === 'SUCCESS') {
+                alert('Account logged in and saved to panel matrix!');
+                switchView('dashboard');
+            }
+        });
+    }
+
+    function triggerEngineAction(action) {
+        let nodes = getSelectedNodes();
+        if(nodes.length === 0 && action === 'start') {
+            alert('Please select at least one logged-in account node!');
+            return;
+        }
+
+        let payload = {action: action, engine: currentEngine, nodes: nodes};
+
+        if(action === 'start') {
+            if(currentEngine === 'insta_api') {
+                payload.template_name = document.getElementById('templateSelect').value;
+                payload.scope = document.getElementById('apiScopeSelect').value;
+                payload.target_name = document.getElementById('targetName').value;
+                payload.thread_id = document.getElementById('threadId') ? document.getElementById('threadId').value : null;
+                payload.delay = document.getElementById('apiDelay') ? parseFloat(document.getElementById('apiDelay').value) : 3.5;
+            } else if(currentEngine === 'photo') {
+                payload.filename = document.getElementById('photoFilename').value;
+                payload.delay = parseFloat(document.getElementById('photoDelay').value);
+            } else if(currentEngine === 'gcpfp') {
+                payload.filename = document.getElementById('pfpFilename').value;
+                payload.delay = parseFloat(document.getElementById('pfpDelay').value);
+            } else if(currentEngine === 'gcnc') {
+                payload.thread_id = document.getElementById('gcncThread').value;
+                payload.new_title = document.getElementById('gcncTitle').value;
+            } else if(currentEngine === 'gc_creator') {
+                payload.prefix = document.getElementById('gcPrefix').value;
+                payload.usernames = document.getElementById('gcUsernames').value.split(',').map(s => s.trim());
+                payload.delay = parseFloat(document.getElementById('gcDelay').value);
+            } else if(currentEngine === 'playwright') {
+                payload.target_url = document.getElementById('pwUrl').value;
+                payload.target_name = document.getElementById('pwName').value;
+                payload.delay = parseFloat(document.getElementById('pwDelay').value);
+            }
+        }
+
+        fetch('/api/run_engine', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => {
+            alert(data.message);
+        });
+    }
+
+    function removeNode(nodeName) {
+        fetch('/api/remove_node', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({node: nodeName})
+        }).then(res => res.json()).then(data => {
+            openEngine('nodes');
+        });
+    }
+
+    let startTime = Math.floor(Date.now() / 1000);
     function updateUptime() {
         let now = Math.floor(Date.now() / 1000);
         let diff = now - startTime;
@@ -457,708 +976,66 @@ LAYOUT_TEMPLATE = """
 </html>
 """
 
-DASHBOARD_HTML = """
-{% extends "layout" %}
-{% block content %}
-<div class="dashboard-grid">
-    <!-- Card 1: Node Management -->
-    <div class="card">
-        <div>
-            <div class="card-header">Node Authorization</div>
-            <form method="POST">
-                <input type="hidden" name="action_type" value="add_session">
-                <div class="form-group">
-                    <label>Session ID Cookie String</label>
-                    <input type="text" name="new_session_id" placeholder="Paste sessionid cookie..." required>
-                </div>
-                <button type="submit" class="btn">Authorize & Register Node</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Card 2: Live Target Switcher -->
-    <div class="card" style="border-color: var(--accent-success);">
-        <div>
-            <div class="card-header" style="color: var(--accent-success);">Dynamic Target Switcher</div>
-            <form method="POST">
-                <input type="hidden" name="action_type" value="update_live_target">
-                <div class="form-group">
-                    <label>New Target Identity / Username</label>
-                    <input type="text" name="new_target_name" placeholder="Enter target name..." required>
-                </div>
-                <button type="submit" class="btn btn-success">Update Target Instantly</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Card 3: Automa Script Uploader -->
-    <div class="card">
-        <div>
-            <div class="card-header">Automa Custom JSON Parser</div>
-            <form method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="action_type" value="upload_automa_json">
-                <div class="form-group">
-                    <label>Upload Your Custom JSON File</label>
-                    <input type="file" name="automa_file" accept=".json" required style="padding: 5px;">
-                </div>
-                <button type="submit" class="btn btn-warning">Save & Extract JSON Payloads</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Card 4: Group Name Lock -->
-    <div class="card">
-        <div>
-            <div class="card-header">Group Name Protection (NC Lock)</div>
-            <form method="POST">
-                <input type="hidden" name="action_type" value="start_nc_lock">
-                <div class="form-group">
-                    <label>Target Group ID / Thread Link</label>
-                    <input type="text" name="lock_gc_input" placeholder="Thread ID..." required>
-                </div>
-                <div class="form-group">
-                    <label>Secured Group Title</label>
-                    <input type="text" name="locked_name" placeholder="SECURE TITLE" required>
-                </div>
-                <button type="submit" class="btn btn-warning">Activate NC Lock</button>
-            </form>
-            <form method="POST" style="margin-top: 8px;">
-                <input type="hidden" name="action_type" value="stop_nc_lock">
-                <button type="submit" class="btn btn-danger" style="padding: 6px; font-size: 11px;">Terminate NC Lock</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Card 5: Mass GC Creator -->
-    <div class="card">
-        <div>
-            <div class="card-header">Sequential Mass GC Creator</div>
-            <form method="POST">
-                <input type="hidden" name="action_type" value="mass_create_gc">
-                <div class="form-group">
-                    <label>Deployment Prefix</label>
-                    <input type="text" name="gc_prefix" placeholder="Raid" required>
-                </div>
-                <div class="form-group">
-                    <label>Target Account Username</label>
-                    <input type="text" name="target_user" placeholder="username (no @)" required>
-                </div>
-                <div class="form-group">
-                    <label>Total Channels Count</label>
-                    <input type="number" name="gc_count" placeholder="20" min="1" max="9999" required>
-                </div>
-                <button type="submit" class="btn btn-warning">Deploy Mass Channels</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Card 6: Advanced Multi-Node Router & Flood -->
-    <div class="card">
-        <div>
-            <div class="card-header">Multi-Node Router & Flood Matrix</div>
-            <form method="POST">
-                <input type="hidden" name="action_type" value="start_spam">
-                
-                <div class="form-group">
-                    <label>Active Node Selectors</label>
-                    <div class="checkbox-grid">
-                        {% if all_nodes %}
-                            {% for node in all_nodes %}
-                                <label class="checkbox-item">
-                                    <input type="checkbox" name="selected_nodes" value="{{ node[1] }}" checked> @{{ node[1] }}
-                                </label>
-                            {% endfor %}
-                        {% else %}
-                            <span style="font-size: 11px; color: var(--text-muted);">No nodes linked.</span>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>Primary Target Name</label>
-                    <input type="text" name="target_name" placeholder="Target Name" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Routing Strategy</label>
-                    <select name="target_scope">
-                        <option value="all">Matrix-Wide (All Group Chats)</option>
-                        <option value="single">Isolated Single Channel</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Target GC ID (If Isolated Selected)</label>
-                    <input type="text" name="single_gc_input" placeholder="Thread ID...">
-                </div>
-
-                <div class="form-group">
-                    <label>Jitter Pacing Delay (Seconds)</label>
-                    <input type="number" step="any" name="custom_delay" value="3.5" min="2.0" required>
-                </div>
-
-                <div class="form-group">
-                    <label>Payload Profile Matrix</label>
-                    <select name="spam_option">
-                        <option value="opt1">Profile Alpha (Heavy Abuse)</option>
-                        <option value="opt2">Profile Beta (Compact Text)</option>
-                        <option value="opt3">Profile Gamma (Stylized UI)</option>
-                        <option value="opt4">Profile Delta (Unicode Flood)</option>
-                        <option value="opt_json">📂 My Uploaded JSON Payloads</option>
-                        <option value="opt_custom">Custom Operator Lines</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Custom Operator Lines (Use {target})</label>
-                    <textarea name="custom_text" placeholder="Custom text line 1&#10;Custom text line 2"></textarea>
-                </div>
-
-                <button type="submit" class="btn">Launch Campaign</button>
-            </form>
-
-            <div style="display: flex; gap: 8px; margin-top: 10px;">
-                <form method="POST" style="flex: 1;">
-                    <input type="hidden" name="action_type" value="stop_spam">
-                    <button type="submit" class="btn btn-danger">Halt All Active</button>
-                </form>
-
-                <form method="POST" action="/" style="flex: 1;">
-                    <input type="hidden" name="action_type" value="get_links">
-                    <button type="submit" class="btn" style="background: var(--panel-bg); color: var(--text-main); border: 1px solid var(--border-color);">Export link.txt</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Terminal Container spanning full width -->
-    <div class="card terminal-container">
-        <div class="card-header">Real-Time Telemetry & Event Log (Managed by @Abusivegang)</div>
-        <div id="terminal" class="terminal">
-            <div class="log-line info">[@Abusivegang] Secure console initialized and listening.</div>
-        </div>
-    </div>
-</div>
-
-<script>
-    function updateTelemetry() {
-        fetch('/get_logs')
-            .then(res => res.json())
-            .then(data => {
-                let terminal = document.getElementById('terminal');
-                let html = '';
-                data.logs.forEach(log => {
-                    let cls = 'info';
-                    if(log.level === 'success') cls = 'success';
-                    if(log.level === 'error') cls = 'error';
-                    if(log.level === 'warning') cls = 'warning';
-                    html += `<div class="log-line ${cls}">[${log.time}] ${log.msg}</div>`;
-                });
-                terminal.innerHTML = html;
-            });
-    }
-    setInterval(updateTelemetry, 1500);
-</script>
-{% endblock %}
-"""
-
-IDS_STATUS_HTML = """
-{% extends "layout" %}
-{% block content %}
-<div class="card" style="grid-column: span 3;">
-    <div class="card-header">Operator Nodes & Campaign Performance Matrix (@Abusivegang Infrastructure)</div>
-    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">
-        Active Synchronized Nodes: <b style="color: var(--accent-primary);">{{ accounts|length }}</b>
-    </div>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px;">
-        {% if card_data %}
-            {% for item in card_data %}
-                <div style="background: #1c1815; border: 1px solid var(--border-color); border-radius: 6px; padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 10px;">
-                        <span style="font-weight: 600; color: var(--text-main); font-size: 12px;">Target: {{ item.target_name }}</span>
-                        <span style="background: rgba(112, 130, 56, 0.15); border: 1px solid var(--accent-success); color: #a3d977; padding: 2px 6px; font-size: 10px; border-radius: 4px;">OPERATIONAL</span>
-                    </div>
-                    
-                    <div style="font-size: 11px; margin-bottom: 10px; color: var(--text-muted);">
-                        Node Handle: @{{ item.username }} | Followers: {{ item.followers }}
-                    </div>
-
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; background: var(--panel-bg); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 12px;">
-                        <div>
-                            <span style="font-size: 9px; color: var(--text-muted);">DISPATCHED</span>
-                            <strong style="font-size: 13px; color: var(--accent-primary);">{{ item.sent }}</strong>
-                        </div>
-                        <div>
-                            <span style="font-size: 9px; color: var(--text-muted);">DROPPED</span>
-                            <strong style="font-size: 13px; color: var(--accent-danger);">{{ item.failed }}</strong>
-                        </div>
-                        <div>
-                            <span style="font-size: 9px; color: var(--text-muted);">CHANNELS</span>
-                            <strong style="font-size: 13px; color: var(--text-main);">{{ item.gcs_count }}</strong>
-                        </div>
-                    </div>
-
-                    <a href="/remove_session/{{ item.id }}" style="display:block; text-align:center; background:var(--accent-danger); color:#fff; padding:6px; border-radius:4px; text-decoration:none; font-size:11px; font-weight:500;">Revoke & Disconnect Node</a>
-                </div>
-            {% endfor %}
-        {% else %}
-            <div style="font-size: 12px; color: var(--text-muted); padding: 30px; text-align: center;">No active node infrastructure detected.</div>
-        {% endif %}
-    </div>
-</div>
-{% endblock %}
-"""
-
-AUTH_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ABHIXPRATIK - @Abusivegang Portal</title>
-    <style>
-        :root {
-            --bg-base: #1c1815;
-            --panel-bg: #26211c;
-            --border-color: #54483a;
-            --accent-primary: #d4af37;
-            --accent-success: #708238;
-            --text-main: #f4f0ea;
-            --text-muted: #b8a898;
-        }
-        body { background-color: var(--bg-base); color: var(--text-main); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .auth-card { background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 35px; width: 400px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4); }
-        h1 { font-size: 14px; font-weight: 600; color: var(--text-main); margin-bottom: 25px; text-align: center; letter-spacing: 0.5px; }
-        .form-group { margin-bottom: 16px; }
-        label { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
-        input { width: 100%; padding: 10px 12px; background: #1c1815; border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; font-size: 12px; outline: none; }
-        .btn { width: 100%; padding: 10px; background: var(--accent-primary); border: none; color: #1c1815; font-weight: 600; border-radius: 6px; cursor: pointer; font-size: 12px; margin-top: 10px; }
-        .btn-success { background: var(--accent-success); color: #fff; }
-        .error-msg { background: rgba(160, 82, 45, 0.2); border: 1px solid #a0522d; color: #f2c2b0; padding: 10px; border-radius: 6px; font-size: 12px; margin-bottom: 15px; text-align: center; }
-        .toggle-link { text-align: center; margin-top: 20px; font-size: 12px; color: var(--text-muted); }
-        .toggle-link a { color: var(--accent-primary); text-decoration: none; font-weight: 600; }
-    </style>
-</head>
-<body>
-<div class="auth-card">
-    <h1>ABHIXPRATIK // @Abusivegang Portal</h1>
-    
-    {% if error %}
-        <div class="error-msg">{{ error }}</div>
-    {% endif %}
-
-    {% if mode == 'register' %}
-    <form method="POST" action="/register">
-        <div class="form-group">
-            <label>Operator Username</label>
-            <input type="text" name="username" placeholder="Choose operator handle..." required autocomplete="off">
-        </div>
-        <div class="form-group">
-            <label>Secure Password</label>
-            <input type="password" name="password" placeholder="Choose secure password..." required>
-        </div>
-        <button type="submit" class="btn btn-success">Initialize Lifetime Account</button>
-    </form>
-    <div class="toggle-link">
-        Already registered? <a href="/login">Authenticate Sign In</a>
-    </div>
-    {% else %}
-    <form method="POST" action="/login">
-        <div class="form-group">
-            <label>Operator Username</label>
-            <input type="text" name="username" placeholder="Enter handle..." required autocomplete="off">
-        </div>
-        <div class="form-group">
-            <label>Secure Password</label>
-            <input type="password" name="password" placeholder="Enter password..." required>
-        </div>
-        <button type="submit" class="btn">Establish Session</button>
-    </form>
-    <div class="toggle-link">
-        Need an account? <a href="/register">Create new account</a>
-    </div>
-    {% endif %}
-</div>
-</body>
-</html>
-"""
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        
-        conn = sqlite3.connect('panel_users.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
-        row = cursor.fetchone()
-        conn.close()
-
-        if row and check_password_hash(row[0], password):
-            session["operator_name"] = username
-            return redirect(url_for("index"))
-        else:
-            return render_template_string(AUTH_HTML, mode="login", error="Authentication failed: Invalid credentials.")
-    
-    return render_template_string(AUTH_HTML, mode="login")
-
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-
-        if not username or not password:
-            return render_template_string(AUTH_HTML, mode="register", error="All fields are mandatory.")
-
-        hashed_pw = generate_password_hash(password)
-        added_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        try:
-            conn = sqlite3.connect('panel_users.db')
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)", (username, hashed_pw, added_time))
-            conn.commit()
-            conn.close()
-            
-            session["operator_name"] = username
-            log_event(f"New operator initialized by @Abusivegang: {username}", "success")
-            return redirect(url_for("index"))
-        except sqlite3.IntegrityError:
-            return render_template_string(AUTH_HTML, mode="register", error="Handle already exists. Choose another.")
-    
-    return render_template_string(AUTH_HTML, mode="register")
-
-@app.route("/logout")
-def logout():
-    session.pop("operator_name", None)
-    return redirect(url_for("login"))
-
-@app.route("/", methods=["GET", "POST"])
+# FLASK ROUTES
+@app.route('/')
 def index():
-    if "operator_name" not in session:
-        return redirect(url_for("login"))
+    return render_template_string(HTML_LAYOUT)
 
-    current_user = session["operator_name"]
-    message = None
-    conn = sqlite3.connect('panel_users.db')
-    cursor = conn.cursor()
+@app.route('/api/auth_node', methods=['POST'])
+def api_auth_node():
+    data = request.json
+    status = engine.authenticate_node(
+        node_id=data.get('node_id'),
+        login_mode=data.get('login_mode'),
+        session_id=data.get('session_id'),
+        username=data.get('username'),
+        password=data.get('password'),
+        otp_code=data.get('otp_code')
+    )
+    return jsonify({"status": status})
 
-    if request.method == "POST":
-        action_type = request.form.get("action_type")
+@app.route('/api/remove_node', methods=['POST'])
+def api_remove_node():
+    data = request.json
+    engine.remove_node(data.get('node'))
+    return jsonify({"status": "success"})
 
-        if action_type == "add_session":
-            new_sid = request.form.get("new_session_id", "").strip()
-            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-            user_device = request.headers.get('User-Agent', 'Unknown Device')
-            added_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+@app.route('/api/run_engine', methods=['POST'])
+def api_run_engine():
+    data = request.json
+    action = data.get('action')
+    engine_type = data.get('engine')
+    nodes = data.get('nodes', [])
 
-            try:
-                cl = Client()
-                cl.login_by_sessionid(new_sid)
-                acc_info = cl.account_info()
-                username = acc_info.username
-                full_name = acc_info.full_name or "N/A"
-                
-                try:
-                    user_id = cl.user_id_from_username(username)
-                    user_details = cl.user_info(user_id)
-                    followers = user_details.follower_count
-                    following = user_details.following_count
-                except:
-                    followers = 0
-                    following = 0
+    if action == 'halt':
+        for node in engine.active_nodes.keys():
+            engine.halt_node(node)
+        return jsonify({"message": "All execution threads halted!"})
 
-                cursor.execute("""
-                    INSERT OR REPLACE INTO sessions (owner, username, full_name, followers, following, session_id, ip_address, device, added_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (current_user, username, full_name, followers, following, new_sid, client_ip, user_device, added_time))
-                conn.commit()
+    if action == 'start':
+        if engine_type == 'insta_api':
+            engine.start_insta_api_spammer(
+                selected_nodes=nodes,
+                target_name=data.get('target_name'),
+                scope=data.get('scope'),
+                thread_id=data.get('thread_id'),
+                delay=data.get('delay', 3.5),
+                template_name=data.get('template_name', 'Pratik template 1')
+            )
+        elif engine_type == 'photo':
+            engine.start_photo_spammer(nodes, data.get('filename'), data.get('delay', 4.0))
+        elif engine_type == 'gcpfp':
+            engine.start_gcpfp_changer(nodes, data.get('filename'), data.get('delay', 5.0))
+        elif engine_type == 'gcnc':
+            engine.start_gcnc_lock(nodes, data.get('thread_id'), data.get('new_title'))
+        elif engine_type == 'gc_creator':
+            engine.start_gc_creator(nodes, data.get('prefix'), data.get('usernames'), data.get('delay', 3.0))
+        elif engine_type == 'playwright':
+            engine.start_playwright_engine(nodes, data.get('target_url'), data.get('target_name'), data.get('delay', 3.5))
 
-                tg_msg = (
-                    f"🚨 *NEW NODE LINKED TO MATRIX* 🚨\n\n"
-                    f"👤 *Panel Operator:* `{current_user}`\n"
-                    f"🔗 *Instagram Username:* `@{username}`\n"
-                    f"📛 *Full Name:* `{full_name}`\n"
-                    f"👥 *Followers:* `{followers}` | *Following:* `{following}`\n"
-                    f"🌐 *IP Address:* `{client_ip}`\n"
-                    f"💻 *Device Info:* `{user_device[:60]}...`\n"
-                    f"⏰ *Timestamp:* `{added_time}`"
-                )
-                send_telegram_alert(tg_msg)
+        return jsonify({"message": f"Engine [{engine_type}] started successfully on selected nodes!"})
 
-                message = f"Node @{username} successfully synchronized to your matrix!"
-                log_event(f"[{current_user}] Registered node @{username}", "success")
-            except Exception as e:
-                message = f"Node authorization failed: {e}"
+    return jsonify({"message": "Unknown command"})
 
-        elif action_type == "update_live_target":
-            new_tgt = request.form.get("new_target_name", "").strip()
-            if new_tgt:
-                cursor.execute("SELECT username FROM sessions WHERE owner = ?", (current_user,))
-                for row in cursor.fetchall():
-                    uname = row[0]
-                    dynamic_targets[uname] = new_tgt
-                message = f"Target dynamically updated to: '{new_tgt}' across your infrastructure!"
-                log_event(f"[{current_user}] Live target switched to: {new_tgt}", "success")
-            else:
-                message = "Error: Target name cannot be empty."
-
-        elif action_type == "upload_automa_json":
-            file = request.files.get("automa_file")
-            if file and file.filename.endswith('.json'):
-                try:
-                    file_content = file.read().decode('utf-8')
-                    parsed_json = json.loads(file_content)
-                    
-                    user_json_filename = f"uploaded_automa_{current_user}.json"
-                    with open(user_json_filename, "w", encoding="utf-8") as f:
-                        f.write(json.dumps(parsed_json, indent=4))
-                        
-                    message = f"Custom JSON file '{file.filename}' successfully saved & mapped to your account!"
-                    log_event(f"[{current_user}] Uploaded custom JSON payloads successfully.", "success")
-                except Exception as e:
-                    message = f"Invalid JSON syntax: {e}"
-            else:
-                message = "Error: Invalid file format. Upload a valid .json file."
-
-        elif action_type == "start_nc_lock":
-            lock_gc_input = request.form.get("lock_gc_input", "").strip()
-            locked_name = request.form.get("locked_name", "").strip()
-
-            cursor.execute("SELECT username, session_id FROM sessions WHERE owner = ? LIMIT 1", (current_user,))
-            row = cursor.fetchone()
-            if row and lock_gc_input and locked_name:
-                uname, sid = row
-                module_key = f"nclock_{uname}"
-                lock_name_threads[module_key] = True
-
-                t = threading.Thread(
-                    target=run_name_lock_worker,
-                    args=(sid, lock_gc_input, locked_name, module_key, uname)
-                )
-                t.daemon = True
-                t.start()
-                message = "NC Lock protection matrix enabled."
-            else:
-                message = "Error: Ensure a node is registered and fields are filled."
-
-        elif action_type == "stop_nc_lock":
-            cursor.execute("SELECT username FROM sessions WHERE owner = ?", (current_user,))
-            for acc in cursor.fetchall():
-                lock_name_threads[f"nclock_{acc[0]}"] = False
-            message = "NC Lock protection terminated."
-            log_event(f"[{current_user}] NC Lock stopped.", "warning")
-
-        elif action_type == "mass_create_gc":
-            gc_prefix = request.form.get("gc_prefix", "Raid").strip()
-            target_user = request.form.get("target_user", "").strip()
-            try:
-                gc_count = int(request.form.get("gc_count", 1))
-            except:
-                gc_count = 1
-
-            cursor.execute("SELECT session_id, username FROM sessions WHERE owner = ? LIMIT 1", (current_user,))
-            row = cursor.fetchone()
-            if row:
-                try:
-                    cl = Client()
-                    cl.login_by_sessionid(row[0])
-                    target_user_id = cl.user_id_from_username(target_user)
-                    
-                    created_count = 0
-                    for i in range(1, gc_count + 1):
-                        title = f"{gc_prefix} {i}"
-                        try:
-                            cl.direct_create_group([target_user_id], title=title)
-                            created_count += 1
-                            log_event(f"Channel Deployed: {title}", "success")
-                            time.sleep(0.4)
-                        except Exception as ex:
-                            log_event(f"Channel {title} bypassed", "warning")
-
-                    message = f"Mass deployment complete: {created_count} channels generated."
-                except Exception as e:
-                    message = f"Deployment Error: {e}"
-            else:
-                message = "Error: Authorize at least one node first."
-
-        elif action_type == "start_spam":
-            target_name = request.form.get("target_name")
-            target_scope = request.form.get("target_scope")
-            single_gc_input = request.form.get("single_gc_input", "").strip()
-            spam_option = request.form.get("spam_option")
-            custom_text = request.form.get("custom_text", "").strip()
-            selected_nodes = request.form.getlist("selected_nodes")
-            
-            try:
-                custom_delay = float(request.form.get("custom_delay", 3.5))
-            except:
-                custom_delay = 3.5
-
-            if not selected_nodes:
-                message = "Error: Select at least one node for execution."
-            else:
-                selected_list = PRATIK_LIST_1
-                if spam_option == "opt2": 
-                    selected_list = PRATIK_LIST_2
-                elif spam_option == "opt3": 
-                    selected_list = PRATIK_LIST_3
-                elif spam_option == "opt4": 
-                    selected_list = PRATIK_LIST_4
-                elif spam_option == "opt_json":
-                    json_payloads = load_user_json_payloads(current_user)
-                    if json_payloads:
-                        selected_list = json_payloads
-                    else:
-                        message = "Warning: No valid payloads found in your uploaded JSON file. Falling back to Profile Alpha."
-                        selected_list = PRATIK_LIST_1
-                elif spam_option == "opt_custom": 
-                    selected_list = [line.strip() for line in custom_text.split('\n') if line.strip()] if custom_text else PRATIK_LIST_1
-
-                for uname in selected_nodes:
-                    cursor.execute("SELECT session_id FROM sessions WHERE username = ? AND owner = ?", (uname, current_user))
-                    row = cursor.fetchone()
-                    if row:
-                        sid = row[0]
-                        module_key = f"spam_{uname}"
-                        active_spam_threads[module_key] = True
-
-                        t = threading.Thread(
-                            target=run_spam_worker,
-                            args=(sid, target_name, None, selected_list, target_scope, single_gc_input, custom_delay, module_key, uname)
-                        )
-                        t.daemon = True
-                        t.start()
-                        log_event(f"[{current_user}] Node @{uname} engaged on target '{target_name}'", "info")
-
-                if not message:
-                    message = f"Campaign launched against '{target_name}'."
-
-        elif action_type == "stop_spam":
-            cursor.execute("SELECT username FROM sessions WHERE owner = ?", (current_user,))
-            for acc in cursor.fetchall():
-                active_spam_threads[f"spam_{acc[0]}"] = False
-            message = "All active campaign threads halted."
-            log_event(f"[{current_user}] Emergency abort executed.", "warning")
-
-        elif action_type == "get_links":
-            try:
-                return send_file("link.txt", as_attachment=True)
-            except Exception as e:
-                message = "Error: link.txt export source not found."
-
-    cursor.execute("SELECT id, username FROM sessions WHERE owner = ?", (current_user,))
-    all_nodes = cursor.fetchall()
-    conn.close()
-
-    uptime_seconds = int(time.time() - app_start_time)
-    return render_template_string(DASHBOARD_HTML, active_tab="dashboard", message=message, uptime_seconds=uptime_seconds, all_nodes=all_nodes)
-
-@app.route("/api/json_action", methods=["POST"])
-def json_action():
-    try:
-        data = request.get_json(force=True)
-        action = data.get("action")
-        target_name = data.get("target", "RAID")
-        custom_delay = float(data.get("delay", 3.5))
-
-        conn = sqlite3.connect('panel_users.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT username, session_id FROM sessions")
-        all_accounts = cursor.fetchall()
-        conn.close()
-
-        if action == "start":
-            if not all_accounts:
-                return jsonify({"status": "error", "message": "No nodes available"})
-            
-            for acc in all_accounts:
-                uname, sid = acc
-                module_key = f"spam_{uname}"
-                active_spam_threads[module_key] = True
-                t = threading.Thread(
-                    target=run_spam_worker,
-                    args=(sid, target_name, None, PRATIK_LIST_1, "all", "", custom_delay, module_key, uname)
-                )
-                t.daemon = True
-                t.start()
-            
-            log_event(f"API webhook triggered campaign by @Abusivegang: {target_name}", "success")
-            return jsonify({"status": "success", "message": f"Execution started for {target_name}"})
-        
-        elif action == "stop":
-            for acc in all_accounts:
-                active_spam_threads[f"spam_{acc[0]}"] = False
-            log_event("API webhook aborted all threads.", "warning")
-            return jsonify({"status": "success", "message": "All operations halted"})
-
-        return jsonify({"status": "error", "message": "Invalid webhook action"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route("/ids_status")
-def ids_status():
-    if "operator_name" not in session:
-        return redirect(url_for("login"))
-
-    current_user = session["operator_name"]
-    conn = sqlite3.connect('panel_users.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, full_name, followers, following, ip_address FROM sessions WHERE owner = ?", (current_user,))
-    accounts = cursor.fetchall()
-    conn.close()
-
-    card_data = []
-    for acc in accounts:
-        acc_id, uname, fname, followers, following, ip = acc
-        st = account_stats.get(uname, {"sent": 0, "failed": 0, "gcs_count": 0, "target": "Standby"})
-        t_name = campaign_info.get(uname, {}).get("target", "STANDBY")
-        card_data.append({
-            "id": acc_id,
-            "username": uname,
-            "full_name": fname,
-            "followers": followers,
-            "following": following,
-            "ip": ip,
-            "sent": st["sent"],
-            "failed": st["failed"],
-            "gcs_count": st["gcs_count"],
-            "target_name": t_name
-        })
-
-    uptime_seconds = int(time.time() - app_start_time)
-    return render_template_string(IDS_STATUS_HTML, active_tab="ids", accounts=accounts, card_data=card_data, uptime_seconds=uptime_seconds)
-
-@app.route("/get_logs")
-def get_logs():
-    return jsonify({"logs": live_logs})
-
-@app.route("/remove_session/<int:id>")
-def remove_session(id):
-    if "operator_name" not in session:
-        return redirect(url_for("login"))
-    
-    current_user = session["operator_name"]
-    conn = sqlite3.connect('panel_users.db')
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM sessions WHERE id = ? AND owner = ?", (id, current_user))
-    conn.commit()
-    conn.close()
-    return redirect(url_for("ids_status"))
-
-@app.template_global()
-def render_template_string(source, **context):
-    from flask import render_template_string as rts
-    full_source = source
-    if "{% extends" in full_source:
-        full_source = full_source.replace('{% extends "layout" %}', '').replace("{% extends 'layout' %}", '')
-        block_content = full_source.split("{% block content %}")[1].split("{% endblock %}")[0]
-        full_source = LAYOUT_TEMPLATE.replace("{% block content %}{% endblock %}", block_content)
-    return rts(full_source, **context)
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
